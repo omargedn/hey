@@ -1383,5 +1383,3 @@ if uploaded_file is not None:
                 # 7. Clean up the temporary file
                 if os.path.exists(temp_file_path):
                     os.unlink(temp_file_path)
-
-
