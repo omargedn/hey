@@ -494,23 +494,15 @@ class AIRephraser:
         Cached method to get the API client.
         """
         try:
-            # Try to get key from Streamlit secrets first
-            api_key = st.secrets.get("DEEPSEEK_API_KEY")
-            
-            # Fallback to environment variable if not in secrets
-            if not api_key:
-                api_key = os.environ.get("DEEPSEEK_API_KEY")
-
-            if not api_key:
-                st.warning("⚠️ DEEPSEEK_API_KEY not found. AI analysis will be skipped.")
-                return None
+            # Get key from Streamlit secrets
+            api_key = st.secrets["DEEPSEEK_API_KEY"]
 
             client = OpenAI(
                 api_key=api_key,
                 base_url="https://api.deepseek.com/v1"
             )
             return client
-            
+        
         except Exception as e:
             st.error(f"❌ Failed to initialize DeepSeek client: {e}")
             return None
@@ -939,11 +931,12 @@ class ReportGenerator:
             ('moving_time', 'Moving time'),
             ('best_time_to_call', 'Best time to call back'),
             ('agent_name', 'Agent Name'),
+            ('call recording', 'Call Recording'),
         ]
 
-        # AI Analysis fields (separate from form data)
+
         self.ai_analysis_fields = [
-            ('personality', 'Seller Personality')  # <-- MOVED to AI Analysis section
+            ('personality', 'Seller Personality'),
         ]
 
         # Call recording will be in its own section at the end
@@ -1028,28 +1021,22 @@ class ReportGenerator:
         ]
 
         # --- 1. THE FORM (Main Data Block) ---
-        lines.extend(self._format_section("PROPERTY & SELLER DETAILS", self.form_fields, merged_data))
-        
-        # --- 2. AI ANALYSIS SECTION (New Section) ---
-        # Create a temporary data dict for AI analysis fields
-        ai_data = {}
+        # We need to manually add the 'personality' data from nlp_data to merged_data
+        # so our formatter can see it.
         if 'personality' in nlp_data:
-            ai_data['personality'] = FieldData(
+            merged_data['personality'] = FieldData(
                 value=nlp_data['personality'],
                 source='conversation',
                 confidence=0.9
             )
+        lines.extend(self._format_section("PROPERTY & SELLER DETAILS", self.form_fields, merged_data))
         
-        # Only add AI Analysis section if we have AI data
-        if ai_data:
-            lines.extend(self._format_section("AI CONVERSATION ANALYSIS", self.ai_analysis_fields, ai_data))
-        
-        # --- 3. QUALIFICATION (After form and AI data) ---
+        # --- 2. QUALIFICATION (Now after form data) ---
         lines.extend(self._format_qualification_section(qualification_results))
 
-        # --- 4. FULL TRANSCRIPT ---
+        # --- 3. FULL TRANSCRIPT ---
         if transcript:
-            lines.extend(self._format_full_transcript(merged_data, transcript))
+            lines.extend(self._format_full_transcript(merged_data, transcript)) # <-- MODIFIED
         else:
             lines.extend([
                 "-" * 50,
@@ -1060,7 +1047,7 @@ class ReportGenerator:
                 ""
             ])
         
-        # --- 5. CALL & SOURCE DATA ---
+        # --- 4. CALL & SOURCE DATA ---
         lines.extend(self._format_section("CALL & SOURCE DATA", self.call_data_fields, merged_data))
         
         return "\n".join(lines)
@@ -1346,12 +1333,14 @@ st.set_page_config(layout="wide")
 st.title("🤖 Real Estate Lead Automation System")
 st.markdown("Upload a lead form `.txt` file to begin analysis.")
 
-# --- API Key Input ---
-st.subheader("🔑 API Key")
-st.markdown("Please enter your DeepSeek API Key. This will **not** be saved.")
-st.warning("For a permanent deployment, you should set this as a **Streamlit Secret** named `DEEPSEEK_API_KEY`.")
-
-api_key_input = st.text_input("DeepSeek API Key", type="password", label_visibility="collapsed")
+# Check if API key is available in secrets
+if 'DEEPSEEK_API_KEY' in st.secrets:
+    st.success("✅ DeepSeek API key found in secrets")
+    # Set the API key as an environment variable
+    os.environ["DEEPSEEK_API_KEY"] = st.secrets["DEEPSEEK_API_KEY"]
+else:
+    st.error("❌ DeepSeek API key not found in secrets. Please add 'DEEPSEEK_API_KEY' to your Streamlit secrets.")
+    st.stop()
 
 # --- File Uploader ---
 st.subheader("📁 Upload Lead File")
@@ -1362,49 +1351,41 @@ if uploaded_file is not None:
     # --- Process Button ---
     if st.button("🚀 Process Lead", type="primary"):
         
-        # 1. Check for API Key
-        if not api_key_input:
-            st.error("❌ Please enter your DeepSeek API Key to proceed.")
-        else:
-            # Set the API key as an environment variable for this session
-            os.environ["DEEPSEEK_API_KEY"] = api_key_input
+        # 1. Save uploaded file to a temporary path
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.txt') as tmp_file:
+            tmp_file.write(uploaded_file.getvalue())
+            temp_file_path = tmp_file.name
+
+        try:
+            # 2. Initialize and run the system
+            # Models are cached, so this is fast after the first run
+            system = RealEstateAutomationSystem()
             
-            # 2. Save uploaded file to a temporary path
-            with tempfile.NamedTemporaryFile(delete=False, suffix='.txt') as tmp_file:
-                tmp_file.write(uploaded_file.getvalue())
-                temp_file_path = tmp_file.name
+            # 3. Run the main processing logic
+            with st.container():
+                report_content, report_filename = system.process_lead(temp_file_path, uploaded_file.name)
+            
+            # 4. Display the final report
+            st.subheader("🎉 Final Enhanced Report")
+            st.text_area("Report Content", report_content, height=600)
+            
+            # 5. Add a download button
+            st.download_button(
+                label="⬇️ Download Report",
+                data=report_content,
+                file_name=report_filename,
+                mime="text/plain"
+            )
 
-            try:
-                # 3. Initialize and run the system
-                # Models are cached, so this is fast after the first run
-                system = RealEstateAutomationSystem()
-                
-                # 4. Run the main processing logic
-                with st.container():
-                    report_content, report_filename = system.process_lead(temp_file_path, uploaded_file.name)
-                
-                # 5. Display the final report
-                st.subheader("🎉 Final Enhanced Report")
-                st.text_area("Report Content", report_content, height=600)
-                
-                # 6. Add a download button
-                st.download_button(
-                    label="⬇️ Download Report",
-                    data=report_content,
-                    file_name=report_filename,
-                    mime="text/plain"
-                )
-
-            except Exception as e:
-                st.error(f"An unexpected error occurred: {e}")
-                # Print the full traceback for debugging
-                st.exception(e)
-                
-            finally:
-                # 7. Clean up the temporary file
-                if os.path.exists(temp_file_path):
-                    os.unlink(temp_file_path)
-
+        except Exception as e:
+            st.error(f"An unexpected error occurred: {e}")
+            # Print the full traceback for debugging
+            st.exception(e)
+            
+        finally:
+            # 6. Clean up the temporary file
+            if os.path.exists(temp_file_path):
+                os.unlink(temp_file_path)
 
 
 
