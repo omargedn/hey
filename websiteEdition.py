@@ -482,10 +482,16 @@ class AIRephraser:
         self.model = "deepseek-chat"
         self._initialize_client()
     
-    @st.cache_resource  # <-- MOVED: Cache only the client initialization
-    def _initialize_client(_self):
+    def _initialize_client(self):
         """
         Initialize the API client with caching.
+        """
+        self.client = self._get_cached_client()
+    
+    @st.cache_resource
+    def _get_cached_client(_self):
+        """
+        Cached method to get the API client.
         """
         try:
             # Try to get key from Streamlit secrets first
@@ -508,10 +514,6 @@ class AIRephraser:
         except Exception as e:
             st.error(f"❌ Failed to initialize DeepSeek client: {e}")
             return None
-
-    def _initialize_client(self):
-        """Wrapper to initialize the cached client"""
-        self.client = self._initialize_client()
 
     def rephrase(self, topic_name: str, transcript: str) -> str:
         """
@@ -1392,4 +1394,5 @@ if uploaded_file is not None:
                 # 7. Clean up the temporary file
                 if os.path.exists(temp_file_path):
                     os.unlink(temp_file_path)
+
 
