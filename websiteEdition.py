@@ -2,6 +2,7 @@
 """
 Real Estate Lead Automation System
 V3: Streamlit Web Application
+(No-Spacy Version for compatibility)
 """
 import json 
 from openai import OpenAI
@@ -12,11 +13,11 @@ import warnings
 from typing import Dict, List, Optional, Any
 from dataclasses import dataclass
 import whisper
-import spacy
-from spacy.tokens import Doc
+# import spacy <-- REMOVED
+# from spacy.tokens import Doc <-- REMOVED
 import requests
-import streamlit as st  # <-- ADDED
-import time  # <-- ADDED for saving temp files
+import streamlit as st
+import time
 
 warnings.filterwarnings("ignore")
 os.environ['KMP_DUPLICATE_LIB_OK'] = 'TRUE'
@@ -28,49 +29,38 @@ class FieldData:
     source: str
     confidence: float = 1.0
 
-# --- NLPAnalyzer Class (with Caching) ---
+# --- NLPAnalyzer Class (Spacy Removed) ---
 class NLPAnalyzer:
     """
-    Analyzes conversation transcripts using spaCy for contextual,
-    NLP-driven entity and intent extraction. V4: Enhanced 'reason'
-    logic to skip confusion and agent restatements.
+    Analyzes conversation transcripts using regex for motivation.
+    'spacy' has been removed to ensure build compatibility.
     """
     def __init__(self):
-        self.nlp = self._load_spacy_model()
+        # self.nlp = self._load_spacy_model() <-- REMOVED
+        pass # No model to load
 
-    @st.cache_resource  # <-- ADDED: Cache the spaCy model
-    def _load_spacy_model(_self): # Note: _self is used in cached methods
-        try:
-            return spacy.load("en_core_web_sm")
-        except OSError:
-            st.error("❌ spaCy model 'en_core_web_sm' not found. App cannot run.")
-            st.error("Please run: python -m spacy download en_core_web_sm")
-            return None
+    # _load_spacy_model method <-- REMOVED
 
     def analyze_transcript(self, transcript: str) -> Dict[str, str]:
         """
-        Run the full NLP pipeline on a transcript.
+        Run the NLP pipeline on a transcript.
         """
-        if not self.nlp:
-            st.warning("⚠️ NLP model not loaded, analysis will be empty.")
-            return {}
-        
         if not transcript:
             return {
                 'motivation': "No transcript provided"
             }
 
-        doc = self.nlp(transcript)
+        # doc = self.nlp(transcript) <-- REMOVED
         transcript_lower = transcript.lower()
         
         # Run individual analysis functions
-        motivation = self._analyze_motivation(doc, transcript_lower)
+        motivation = self._analyze_motivation(transcript_lower) # <-- MODIFIED
         
         return {
             'motivation': motivation
         }
 
-    def _analyze_motivation(self, doc: Doc, transcript_lower: str) -> str:
+    def _analyze_motivation(self, transcript_lower: str) -> str: # <-- MODIFIED
         """
         Contextually analyze motivation/timeline.
         """
@@ -906,7 +896,7 @@ class DataMerger:
         
         return merged
 
-# --- ReportGenerator Class (Updated for Streamlit) ---
+# --- ReportGenerator Class (Spacy Removed) ---
 class ReportGenerator:
     """
     Generate professional text reports with enhanced data.
@@ -915,7 +905,7 @@ class ReportGenerator:
     
     def __init__(self):
         self.conversation_summarizer = ConversationSummarizer()
-        self.nlp = None 
+        # self.nlp = None  <-- REMOVED
         
         # Define a single master list for all form fields in the user's specified order
         self.form_fields = [
@@ -947,9 +937,7 @@ class ReportGenerator:
         ]
 
 
-    def set_nlp_model(self, nlp_model):
-        """Provide a loaded spaCy model for sentence splitting."""
-        self.nlp = nlp_model
+    # set_nlp_model method <-- REMOVED
 
     def _format_field_line(self, data: Dict[str, FieldData], field_key: str, display_name: str) -> str:
         """Helper to format a single ◇ line."""
@@ -1040,7 +1028,7 @@ class ReportGenerator:
 
         # --- 3. FULL TRANSCRIPT ---
         if transcript:
-            lines.extend(self._format_full_transcript(merged_data, transcript))
+            lines.extend(self._format_full_transcript(merged_data, transcript)) # <-- MODIFIED
         else:
             lines.extend([
                 "-" * 50,
@@ -1060,7 +1048,7 @@ class ReportGenerator:
     def _format_full_transcript(self, data: Dict[str, FieldData], transcript: str) -> List[str]:
         """
         Formats the transcript with heuristic speaker labels (Agent/Seller).
-        This is a "best guess" and only labels high-confidence lines.
+        This version splits by newline, not spacy sentences.
         """
         lines = [
             "-" * 50,
@@ -1069,11 +1057,6 @@ class ReportGenerator:
             "(Note: Speaker labels are a 'best guess' and only added where confident.)",
             ""
         ]
-
-        if not self.nlp:
-            lines.append("(NLP model not loaded, cannot split transcript.)")
-            lines.append(transcript)
-            return lines + [""]
 
         # Get speaker names from the data, with defaults
         agent_name_full = data.get('agent_name', FieldData("Agent", "", 0.0)).value
@@ -1086,9 +1069,9 @@ class ReportGenerator:
         # Set max label length for clean formatting
         max_label_len = max(len(agent_label), len(seller_label)) + 1
 
-        doc = self.nlp(transcript)
-        for sent in doc.sents:
-            text = sent.text.strip()
+        # --- MODIFIED: Loop over split lines instead of doc.sents ---
+        for text in transcript.splitlines():
+            text = text.strip()
             if not text:
                 continue
 
@@ -1132,7 +1115,7 @@ class ReportGenerator:
         
         return output_path # Just return the name
 
-# --- RealEstateAutomationSystem Class (Updated for Streamlit) ---
+# --- RealEstateAutomationSystem Class (Spacy Removed) ---
 class RealEstateAutomationSystem:
     def __init__(self):
         self.form_parser = FormParser()
@@ -1157,9 +1140,8 @@ class RealEstateAutomationSystem:
         """
         st.info("Loading AI models (this is cached and only runs once)...")
         
-        # NLPAnalyzer loads and holds the spaCy model (cached)
-        self.nlp_analyzer = NLPAnalyzer()
-        spacy_model = self.nlp_analyzer.nlp 
+        # NLPAnalyzer loads (but doesn't hold a model)
+        self.nlp_analyzer = NLPAnalyzer() # <-- MODIFIED
         
         # Initialize the new API-based rephraser (cached)
         self.rephraser = AIRephraser()
@@ -1169,15 +1151,11 @@ class RealEstateAutomationSystem:
         else:
             st.error("❌ AI Qualifier NOT initialized (API client missing).")
 
-        # Give the report generator the spaCy model for sentence splitting
-        self.report_generator.set_nlp_model(spacy_model)
+        # No spacy model to set
+        # self.report_generator.set_nlp_model(spacy_model) <-- REMOVED
 
-        if spacy_model:
-            st.success("✅ spaCy model loaded.")
-        else:
-            st.error("❌ Failed to load spaCy model. Analysis will be impacted.")
     
-    def process_lead(self, input_file_path: str, input_filename: str) -> tuple[str, str]:
+    def process_lead(self, input_file_path: str, input_filename: str) -> (str, str):
         """Process a single lead file and return report content and filename"""
         
         # Step 1: Parse form data
