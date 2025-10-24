@@ -939,12 +939,11 @@ class ReportGenerator:
             ('moving_time', 'Moving time'),
             ('best_time_to_call', 'Best time to call back'),
             ('agent_name', 'Agent Name'),
-            ('call recording', 'Call Recording URL'),
         ]
 
-
+        # AI Analysis fields (separate from form data)
         self.ai_analysis_fields = [
-            ('personality', 'Seller Personality'),
+            ('personality', 'Seller Personality')  # <-- MOVED to AI Analysis section
         ]
 
         # Call recording will be in its own section at the end
@@ -1029,22 +1028,28 @@ class ReportGenerator:
         ]
 
         # --- 1. THE FORM (Main Data Block) ---
-        # We need to manually add the 'personality' data from nlp_data to merged_data
-        # so our formatter can see it.
+        lines.extend(self._format_section("PROPERTY & SELLER DETAILS", self.form_fields, merged_data))
+        
+        # --- 2. AI ANALYSIS SECTION (New Section) ---
+        # Create a temporary data dict for AI analysis fields
+        ai_data = {}
         if 'personality' in nlp_data:
-            merged_data['personality'] = FieldData(
+            ai_data['personality'] = FieldData(
                 value=nlp_data['personality'],
                 source='conversation',
                 confidence=0.9
             )
-        lines.extend(self._format_section("PROPERTY & SELLER DETAILS", self.form_fields, merged_data))
         
-        # --- 2. QUALIFICATION (Now after form data) ---
+        # Only add AI Analysis section if we have AI data
+        if ai_data:
+            lines.extend(self._format_section("AI CONVERSATION ANALYSIS", self.ai_analysis_fields, ai_data))
+        
+        # --- 3. QUALIFICATION (After form and AI data) ---
         lines.extend(self._format_qualification_section(qualification_results))
 
-        # --- 3. FULL TRANSCRIPT ---
+        # --- 4. FULL TRANSCRIPT ---
         if transcript:
-            lines.extend(self._format_full_transcript(merged_data, transcript)) # <-- MODIFIED
+            lines.extend(self._format_full_transcript(merged_data, transcript))
         else:
             lines.extend([
                 "-" * 50,
@@ -1055,7 +1060,7 @@ class ReportGenerator:
                 ""
             ])
         
-        # --- 4. CALL & SOURCE DATA ---
+        # --- 5. CALL & SOURCE DATA ---
         lines.extend(self._format_section("CALL & SOURCE DATA", self.call_data_fields, merged_data))
         
         return "\n".join(lines)
@@ -1399,6 +1404,7 @@ if uploaded_file is not None:
                 # 7. Clean up the temporary file
                 if os.path.exists(temp_file_path):
                     os.unlink(temp_file_path)
+
 
 
 
