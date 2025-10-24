@@ -2,7 +2,6 @@
 """
 Real Estate Lead Automation System
 V3: Streamlit Web Application
-(No-Spacy Version for compatibility)
 """
 import json 
 from openai import OpenAI
@@ -13,11 +12,11 @@ import warnings
 from typing import Dict, List, Optional, Any
 from dataclasses import dataclass
 import whisper
-# import spacy <-- REMOVED
-# from spacy.tokens import Doc <-- REMOVED
+import spacy
+from spacy.tokens import Doc
 import requests
-import streamlit as st
-import time
+import streamlit as st  # <-- ADDED
+import time  # <-- ADDED for saving temp files
 
 warnings.filterwarnings("ignore")
 os.environ['KMP_DUPLICATE_LIB_OK'] = 'TRUE'
@@ -29,38 +28,49 @@ class FieldData:
     source: str
     confidence: float = 1.0
 
-# --- NLPAnalyzer Class (Spacy Removed) ---
+# --- NLPAnalyzer Class (with Caching) ---
 class NLPAnalyzer:
     """
-    Analyzes conversation transcripts using regex for motivation.
-    'spacy' has been removed to ensure build compatibility.
+    Analyzes conversation transcripts using spaCy for contextual,
+    NLP-driven entity and intent extraction. V4: Enhanced 'reason'
+    logic to skip confusion and agent restatements.
     """
     def __init__(self):
-        # self.nlp = self._load_spacy_model() <-- REMOVED
-        pass # No model to load
+        self.nlp = self._load_spacy_model()
 
-    # _load_spacy_model method <-- REMOVED
+    @st.cache_resource  # <-- ADDED: Cache the spaCy model
+    def _load_spacy_model(_self): # Note: _self is used in cached methods
+        try:
+            return spacy.load("en_core_web_sm")
+        except OSError:
+            st.error("❌ spaCy model 'en_core_web_sm' not found. App cannot run.")
+            st.error("Please run: python -m spacy download en_core_web_sm")
+            return None
 
     def analyze_transcript(self, transcript: str) -> Dict[str, str]:
         """
-        Run the NLP pipeline on a transcript.
+        Run the full NLP pipeline on a transcript.
         """
+        if not self.nlp:
+            st.warning("⚠️ NLP model not loaded, analysis will be empty.")
+            return {}
+        
         if not transcript:
             return {
                 'motivation': "No transcript provided"
             }
 
-        # doc = self.nlp(transcript) <-- REMOVED
+        doc = self.nlp(transcript)
         transcript_lower = transcript.lower()
         
         # Run individual analysis functions
-        motivation = self._analyze_motivation(transcript_lower) # <-- MODIFIED
+        motivation = self._analyze_motivation(doc, transcript_lower)
         
         return {
             'motivation': motivation
         }
 
-    def _analyze_motivation(self, transcript_lower: str) -> str: # <-- MODIFIED
+    def _analyze_motivation(self, doc: Doc, transcript_lower: str) -> str:
         """
         Contextually analyze motivation/timeline.
         """
@@ -896,7 +906,7 @@ class DataMerger:
         
         return merged
 
-# --- ReportGenerator Class (Spacy Removed) ---
+# --- ReportGenerator Class (Updated for Streamlit) ---
 class ReportGenerator:
     """
     Generate professional text reports with enhanced data.
@@ -905,7 +915,7 @@ class ReportGenerator:
     
     def __init__(self):
         self.conversation_summarizer = ConversationSummarizer()
-        # self.nlp = None  <-- REMOVED
+        self.nlp = None 
         
         # Define a single master list for all form fields in the user's specified order
         self.form_fields = [
@@ -937,7 +947,9 @@ class ReportGenerator:
         ]
 
 
-    # set_nlp_model method <-- REMOVED
+    def set_nlp_model(self, nlp_model):
+        """Provide a loaded spaCy model for sentence splitting."""
+        self.nlp = nlp_model
 
     def _format_field_line(self, data: Dict[str, FieldData], field_key: str, display_name: str) -> str:
         """Helper to format a single ◇ line."""
@@ -1028,7 +1040,7 @@ class ReportGenerator:
 
         # --- 3. FULL TRANSCRIPT ---
         if transcript:
-            lines.extend(self._format_full_transcript(merged_data, transcript)) # <-- MODIFIED
+            lines.extend(self._format_full_transcript(merged_data, transcript))
         else:
             lines.extend([
                 "-" * 50,
@@ -1048,7 +1060,7 @@ class ReportGenerator:
     def _format_full_transcript(self, data: Dict[str, FieldData], transcript: str) -> List[str]:
         """
         Formats the transcript with heuristic speaker labels (Agent/Seller).
-        This version splits by newline, not spacy sentences.
+        This is a "best guess" and only labels high-confidence lines.
         """
         lines = [
             "-" * 50,
@@ -1057,6 +1069,11 @@ class ReportGenerator:
             "(Note: Speaker labels are a 'best guess' and only added where confident.)",
             ""
         ]
+
+        if not self.nlp:
+            lines.append("(NLP model not loaded, cannot split transcript.)")
+            lines.append(transcript)
+            return lines + [""]
 
         # Get speaker names from the data, with defaults
         agent_name_full = data.get('agent_name', FieldData("Agent", "", 0.0)).value
@@ -1069,9 +1086,9 @@ class ReportGenerator:
         # Set max label length for clean formatting
         max_label_len = max(len(agent_label), len(seller_label)) + 1
 
-        # --- MODIFIED: Loop over split lines instead of doc.sents ---
-        for text in transcript.splitlines():
-            text = text.strip()
+        doc = self.nlp(transcript)
+        for sent in doc.sents:
+            text = sent.text.strip()
             if not text:
                 continue
 
@@ -1115,7 +1132,7 @@ class ReportGenerator:
         
         return output_path # Just return the name
 
-# --- RealEstateAutomationSystem Class (Spacy Removed) ---
+# --- RealEstateAutomationSystem Class (Updated for Streamlit) ---
 class RealEstateAutomationSystem:
     def __init__(self):
         self.form_parser = FormParser()
@@ -1140,8 +1157,9 @@ class RealEstateAutomationSystem:
         """
         st.info("Loading AI models (this is cached and only runs once)...")
         
-        # NLPAnalyzer loads (but doesn't hold a model)
-        self.nlp_analyzer = NLPAnalyzer() # <-- MODIFIED
+        # NLPAnalyzer loads and holds the spaCy model (cached)
+        self.nlp_analyzer = NLPAnalyzer()
+        spacy_model = self.nlp_analyzer.nlp 
         
         # Initialize the new API-based rephraser (cached)
         self.rephraser = AIRephraser()
@@ -1151,11 +1169,15 @@ class RealEstateAutomationSystem:
         else:
             st.error("❌ AI Qualifier NOT initialized (API client missing).")
 
-        # No spacy model to set
-        # self.report_generator.set_nlp_model(spacy_model) <-- REMOVED
+        # Give the report generator the spaCy model for sentence splitting
+        self.report_generator.set_nlp_model(spacy_model)
 
+        if spacy_model:
+            st.success("✅ spaCy model loaded.")
+        else:
+            st.error("❌ Failed to load spaCy model. Analysis will be impacted.")
     
-    def process_lead(self, input_file_path: str, input_filename: str) -> (str, str):
+    def process_lead(self, input_file_path: str, input_filename: str) -> tuple[str, str]:
         """Process a single lead file and return report content and filename"""
         
         # Step 1: Parse form data
@@ -1319,18 +1341,31 @@ class RealEstateAutomationSystem:
         return form_data
 
 
-# --- STREAMLIT UI ---
+# --- STREAMLIT UI (Updated Logic for API Key) ---
 
 st.set_page_config(layout="wide")
 st.title("🤖 Real Estate Lead Automation System")
 st.markdown("Upload a lead form `.txt` file to begin analysis.")
 
-# --- API Key Input ---
-st.subheader("🔑 API Key")
-st.markdown("Please enter your DeepSeek API Key. This will **not** be saved.")
-st.warning("For a permanent deployment, you should set this as a **Streamlit Secret** named `DEEPSEEK_API_KEY`.")
+# --- Check for API Key (Prioritize Environment/Secrets) ---
+api_key_available = False
+api_key_from_env = os.environ.get("DEEPSEEK_API_KEY") # Check environment first (Hugging Face Secrets)
+api_key_input = None # Initialize input variable
 
-api_key_input = st.text_input("DeepSeek API Key", type="password", label_visibility="collapsed")
+if api_key_from_env:
+    st.success("✅ DeepSeek API Key found in environment/secrets.")
+    api_key_available = True
+    # We will use api_key_from_env later
+else:
+    # Only show the input box if the key wasn't found in the environment
+    st.subheader("🔑 API Key Required")
+    st.markdown("Please enter your DeepSeek API Key. This should be set as a **Repository Secret** named `DEEPSEEK_API_KEY` in Hugging Face for permanent use.")
+    api_key_input = st.text_input("DeepSeek API Key", type="password", label_visibility="collapsed")
+    if api_key_input:
+        api_key_available = True
+        # If input is provided, set it for this session (less secure)
+        os.environ["DEEPSEEK_API_KEY"] = api_key_input
+
 
 # --- File Uploader ---
 st.subheader("📁 Upload Lead File")
@@ -1341,12 +1376,12 @@ if uploaded_file is not None:
     # --- Process Button ---
     if st.button("🚀 Process Lead", type="primary"):
         
-        # 1. Check for API Key
-        if not api_key_input:
-            st.error("❌ Please enter your DeepSeek API Key to proceed.")
+        # 1. Check if API Key is available (either from env or input)
+        if not api_key_available:
+            st.error("❌ DeepSeek API Key is missing. Please set it as a Hugging Face Secret or enter it above.")
         else:
-            # Set the API key as an environment variable for this session
-            os.environ["DEEPSEEK_API_KEY"] = api_key_input
+            # Key is available, proceed with processing
+            # (Note: If using input, os.environ was already set)
             
             # 2. Save uploaded file to a temporary path
             with tempfile.NamedTemporaryFile(delete=False, suffix='.txt') as tmp_file:
@@ -1356,23 +1391,28 @@ if uploaded_file is not None:
             try:
                 # 3. Initialize and run the system
                 # Models are cached, so this is fast after the first run
+                # The __init__ methods will now correctly find the API key from os.environ
                 system = RealEstateAutomationSystem()
                 
-                # 4. Run the main processing logic
-                with st.container():
-                    report_content, report_filename = system.process_lead(temp_file_path, uploaded_file.name)
-                
-                # 5. Display the final report
-                st.subheader("🎉 Final Enhanced Report")
-                st.text_area("Report Content", report_content, height=600)
-                
-                # 6. Add a download button
-                st.download_button(
-                    label="⬇️ Download Report",
-                    data=report_content,
-                    file_name=report_filename,
-                    mime="text/plain"
-                )
+                # Check again if AIQualifier was initialized (depends on key being found in __init__)
+                if not system.ai_qualifier:
+                     st.error("❌ AI Qualifier failed to initialize. Check API Key.")
+                else:
+                    # 4. Run the main processing logic
+                    with st.container():
+                        report_content, report_filename = system.process_lead(temp_file_path, uploaded_file.name)
+                    
+                    # 5. Display the final report
+                    st.subheader("🎉 Final Enhanced Report")
+                    st.text_area("Report Content", report_content, height=600)
+                    
+                    # 6. Add a download button
+                    st.download_button(
+                        label="⬇️ Download Report",
+                        data=report_content,
+                        file_name=report_filename,
+                        mime="text/plain"
+                    )
 
             except Exception as e:
                 st.error(f"An unexpected error occurred: {e}")
