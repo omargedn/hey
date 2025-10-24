@@ -2,7 +2,4 @@ streamlit
 openai
 openai-whisper
 requests
-# Pin spacy to the exact version of the model
-spacy==3.6.0
-# Add the spaCy model (compatible with spacy 3.6.0)
-en_core_web_sm@https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.6.0/en_core_web_sm-3.6.0.tar.gz
+setuptools-rust
