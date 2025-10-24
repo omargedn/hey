@@ -1328,286 +1328,63 @@ class RealEstateAutomationSystem:
 
 # --- STREAMLIT UI ---
 
-st.set_page_config(
-    page_title="Real Estate Lead Automation",
-    page_icon="🤖",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
+st.set_page_config(layout="wide")
+st.title("🤖 Real Estate Lead Automation System")
+st.markdown("Upload a lead form `.txt` file to begin analysis.")
 
-# Custom CSS for mobile-friendly design and better upload area
-st.markdown("""
-<style>
-    @media (max-width: 768px) {
-        .main-header {
-            font-size: 1.8rem !important;
-        }
-        .section-header {
-            font-size: 1.2rem !important;
-        }
-        .metric-card {
-            margin: 5px 0 !important;
-        }
-    }
-    
-    .upload-area {
-        border: 2px dashed #2e86ab;
-        border-radius: 10px;
-        padding: 30px;
-        text-align: center;
-        margin: 20px 0;
-        background-color: #f8f9fa;
-        transition: all 0.3s ease;
-    }
-    .upload-area:hover {
-        border-color: #1f77b4;
-        background-color: #e9f7fe;
-    }
-    .upload-area.drag-over {
-        border-color: #1f77b4;
-        background-color: #e9f7fe;
-        transform: scale(1.02);
-    }
-    .metric-card {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        border-radius: 10px;
-        padding: 15px;
-        color: white;
-        margin: 10px 0;
-    }
-    .qualification-badge {
-        padding: 5px 15px;
-        border-radius: 20px;
-        font-weight: bold;
-        text-align: center;
-    }
-    .badge-high { background-color: #28a745; color: white; }
-    .badge-medium { background-color: #ffc107; color: black; }
-    .badge-low { background-color: #dc3545; color: white; }
-</style>
-""", unsafe_allow_html=True)
+# Check if API key is available in secrets
+if 'DEEPSEEK_API_KEY' in st.secrets:
+    st.success("✅ DeepSeek API key found in secrets")
+    # Set the API key as an environment variable
+    os.environ["DEEPSEEK_API_KEY"] = st.secrets["DEEPSEEK_API_KEY"]
+else:
+    st.error("❌ DeepSeek API key not found in secrets. Please add 'DEEPSEEK_API_KEY' to your Streamlit secrets.")
+    st.stop()
 
-# Session state for processing history
-if 'processing_history' not in st.session_state:
-    st.session_state.processing_history = []
-
-# Custom header
-st.markdown('<h1 class="main-header">🏠 Real Estate Lead Automation System</h1>', unsafe_allow_html=True)
-st.markdown("### *Intelligent Property Lead Analysis & Qualification*")
-
-# Main content area
-st.markdown('<div class="section-header">📁 Upload Lead File</div>', unsafe_allow_html=True)
-
-# Enhanced file upload area
-with st.container():
-    st.markdown('<div class="upload-area">', unsafe_allow_html=True)
-    uploaded_file = st.file_uploader(
-        "**Drag and drop or click to upload your lead form**", 
-        type=["txt"],
-        help="Upload a .txt file containing the lead form data",
-        key="file_uploader"
-    )
-    st.markdown("""
-    <div style='color: #666; font-size: 0.9rem; margin-top: 10px;'>
-    Supported format: .txt files with lead form data
-    </div>
-    """, unsafe_allow_html=True)
-    st.markdown('</div>', unsafe_allow_html=True)
+# --- File Uploader ---
+st.subheader("📁 Upload Lead File")
+uploaded_file = st.file_uploader("Select a `.txt` lead file", type=["txt"], label_visibility="collapsed")
 
 if uploaded_file is not None:
-    # File info display
-    with st.expander("📄 File Details", expanded=True):
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.metric("File Name", uploaded_file.name)
-        with col2:
-            st.metric("File Size", f"{len(uploaded_file.getvalue()) / 1024:.1f} KB")
-        with col3:
-            st.metric("File Type", "Text File")
     
-    # Process button
-    st.markdown("---")
-    if st.button("🚀 **PROCESS LEAD**", type="primary", use_container_width=True):
+    # --- Process Button ---
+    if st.button("🚀 Process Lead", type="primary"):
         
-        # Save uploaded file
+        # 1. Save uploaded file to a temporary path
         with tempfile.NamedTemporaryFile(delete=False, suffix='.txt') as tmp_file:
             tmp_file.write(uploaded_file.getvalue())
             temp_file_path = tmp_file.name
 
         try:
-            # Progress tracking
-            progress_bar = st.progress(0)
-            status_text = st.empty()
-            
-            # Step 1: Initialize system
-            status_text.text("🔄 Initializing system components...")
-            progress_bar.progress(10)
-            time.sleep(0.5)
-            
+            # 2. Initialize and run the system
+            # Models are cached, so this is fast after the first run
             system = RealEstateAutomationSystem()
-            progress_bar.progress(20)
             
-            # Step 2: Process lead with detailed progress
-            status_text.text("📝 Parsing form data...")
-            progress_bar.progress(30)
-            
-            status_text.text("🎧 Processing call recording...")
-            progress_bar.progress(50)
-            
-            status_text.text("🤖 Running AI analysis...")
-            progress_bar.progress(70)
-            
-            status_text.text("⚖️ Qualifying lead...")
-            progress_bar.progress(85)
-            
-            # Process the lead
-            with st.spinner("Finalizing analysis..."):
+            # 3. Run the main processing logic
+            with st.container():
                 report_content, report_filename = system.process_lead(temp_file_path, uploaded_file.name)
             
-            progress_bar.progress(100)
-            status_text.text("✅ Analysis complete!")
+            # 4. Display the final report
+            st.subheader("🎉 Final Enhanced Report")
+            st.text_area("Report Content", report_content, height=600)
             
-            # Store in processing history
-            history_entry = {
-                'filename': uploaded_file.name,
-                'timestamp': time.strftime('%Y-%m-%d %H:%M:%S'),
-                'report_content': report_content,
-                'qualification_score': None  # We'll extract this later
-            }
-            st.session_state.processing_history.append(history_entry)
-            
-            # Results section
-            st.markdown("---")
-            st.markdown('<div class="section-header">🎉 Analysis Complete</div>', unsafe_allow_html=True)
-            
-            # Quick Summary Dashboard
-            st.subheader("📊 Quick Summary")
-            
-            # Extract key metrics (you'll need to adapt this based on your data structure)
-            col1, col2, col3, col4 = st.columns(4)
-            
-            # Placeholder metrics - you'll need to extract these from your actual data
-            with col1:
-                st.markdown('<div class="metric-card">', unsafe_allow_html=True)
-                st.metric("Lead Score", "85/100", "Prime")
-                st.markdown('</div>', unsafe_allow_html=True)
-            
-            with col2:
-                st.markdown('<div class="metric-card">', unsafe_allow_html=True)
-                st.metric("Property Type", "Single Family")
-                st.markdown('</div>', unsafe_allow_html=True)
-            
-            with col3:
-                st.markdown('<div class="metric-card">', unsafe_allow_html=True)
-                st.metric("Asking Price", "$450,000")
-                st.markdown('</div>', unsafe_allow_html=True)
-            
-            with col4:
-                st.markdown('<div class="metric-card">', unsafe_allow_html=True)
-                st.metric("Motivation", "High")
-                st.markdown('</div>', unsafe_allow_html=True)
-            
-            # Qualification Score Visualization
-            st.subheader("⚖️ Qualification Score")
-            
-            # Score visualization
-            score = 85  # This should come from your qualification_results
-            qual_col1, qual_col2, qual_col3 = st.columns([1, 2, 1])
-            
-            with qual_col2:
-                # Progress bar for overall score
-                st.markdown(f"**Overall Score: {score}/100**")
-                st.progress(score / 100)
-                
-                # Qualification badge
-                if score >= 80:
-                    badge_class = "badge-high"
-                    priority = "HIGH PRIORITY"
-                elif score >= 50:
-                    badge_class = "badge-medium"
-                    priority = "MEDIUM PRIORITY"
-                else:
-                    badge_class = "badge-low"
-                    priority = "LOW PRIORITY"
-                
-                st.markdown(f'<div class="qualification-badge {badge_class}">{priority}</div>', unsafe_allow_html=True)
-            
-            # Full Report Section
-            st.markdown("---")
-            st.subheader("📋 Full Report")
-            
-            # Report text area with auto-copy functionality
-            report_col1, report_col2 = st.columns([3, 1])
-            
-            with report_col1:
-                report_display = st.text_area(
-                    "Enhanced Lead Report",
-                    report_content,
-                    height=400,
-                    label_visibility="collapsed"
-                )
-            
-            with report_col2:
-                st.markdown("### 📋 Actions")
-                
-                # Auto-copy to clipboard button
-                if st.button("📋 Copy to Clipboard", use_container_width=True):
-                    # For Streamlit, we use a different approach since direct clipboard access is limited
-                    st.code(report_content, language="text")
-                    st.success("✅ Report copied to clipboard! You can now paste it anywhere.")
-                
-                # Download button
-                st.download_button(
-                    label="💾 Download Report",
-                    data=report_content,
-                    file_name=report_filename,
-                    mime="text/plain",
-                    use_container_width=True
-                )
-                
-                # Process another button
-                if st.button("🔄 Process Another", use_container_width=True):
-                    st.rerun()
-            
-            # Processing History
-            if st.session_state.processing_history:
-                st.markdown("---")
-                st.subheader("📚 Processing History")
-                
-                for i, entry in enumerate(reversed(st.session_state.processing_history[-5:]), 1):  # Show last 5
-                    with st.expander(f"{entry['filename']} - {entry['timestamp']}"):
-                        st.text_area(
-                            f"Report {i}",
-                            entry['report_content'],
-                            height=200,
-                            key=f"history_{i}"
-                        )
-                        if st.button(f"📋 Copy Report {i}", key=f"copy_{i}"):
-                            st.code(entry['report_content'], language="text")
-                            st.success("✅ Copied to clipboard!")
+            # 5. Add a download button
+            st.download_button(
+                label="⬇️ Download Report",
+                data=report_content,
+                file_name=report_filename,
+                mime="text/plain"
+            )
 
         except Exception as e:
-            progress_bar.progress(0)
-            status_text.text("❌ Processing failed")
             st.error(f"An unexpected error occurred: {e}")
+            # Print the full traceback for debugging
             st.exception(e)
             
         finally:
-            # Clean up temporary file
+            # 6. Clean up the temporary file
             if os.path.exists(temp_file_path):
                 os.unlink(temp_file_path)
-
-# Mobile-friendly footer
-st.markdown("---")
-st.markdown(
-    """
-    <div style='text-align: center; color: #666; padding: 20px;'>
-        <div>Real Estate Lead Automation System v3.0</div>
-        <div style='font-size: 0.8rem;'>Built with Streamlit 🤖 | Mobile Optimized</div>
-    </div>
-    """, 
-    unsafe_allow_html=True
-)
 
 
 
