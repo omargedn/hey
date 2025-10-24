@@ -474,12 +474,19 @@ class AIRephraser:
     Handles: Reason, Condition, Mortgage, Occupancy
     """
     
-    @st.cache_resource # <-- ADDED: Cache the API client
-    def __init__(_self):
+    def __init__(self):
         """
         Initialize the AI Rephraser with the DeepSeek API client.
         """
-        _self.client = None
+        self.client = None
+        self.model = "deepseek-chat"
+        self._initialize_client()
+    
+    @st.cache_resource  # <-- MOVED: Cache only the client initialization
+    def _initialize_client(_self):
+        """
+        Initialize the API client with caching.
+        """
         try:
             # Try to get key from Streamlit secrets first
             api_key = st.secrets.get("DEEPSEEK_API_KEY")
@@ -490,18 +497,21 @@ class AIRephraser:
 
             if not api_key:
                 st.warning("⚠️ DEEPSEEK_API_KEY not found. AI analysis will be skipped.")
-                _self.client = None
-                return
+                return None
 
-            _self.client = OpenAI(
+            client = OpenAI(
                 api_key=api_key,
                 base_url="https://api.deepseek.com/v1"
             )
-            _self.model = "deepseek-chat" 
+            return client
             
         except Exception as e:
             st.error(f"❌ Failed to initialize DeepSeek client: {e}")
-            _self.client = None
+            return None
+
+    def _initialize_client(self):
+        """Wrapper to initialize the cached client"""
+        self.client = self._initialize_client()
 
     def rephrase(self, topic_name: str, transcript: str) -> str:
         """
@@ -695,8 +705,7 @@ class AIRephraser:
         except Exception as e:
             st.error(f"❌ DEEPSEEK API ERROR: {e}")
             return f"Error analyzing {topic_name} with API."
-
-# --- AIQualifier Class (with Caching) ---
+            
 class AIQualifier:
     """
     Analyzes final lead data against a set of business rules
@@ -1383,3 +1392,4 @@ if uploaded_file is not None:
                 # 7. Clean up the temporary file
                 if os.path.exists(temp_file_path):
                     os.unlink(temp_file_path)
+
