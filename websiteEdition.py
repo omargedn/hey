@@ -144,6 +144,12 @@ class FormParser:
                 if matches:
                     # Take the last match to avoid duplicates
                     value = matches[-1].strip()
+                    
+                    # Special handling for price fields to detect "not mentioned"
+                    if 'price' in name.lower() or 'estimate' in name.lower():
+                        if not value or value in ['', 'Not specified', 'N/A', 'n/a', 'Not mentioned', 'None']:
+                            return "Waiting for our offer"
+                    
                     if value and value not in ['', 'Not specified', 'N/A', 'n/a']:
                         # Clean up malformed prefixes
                         value = re.sub(r'^◇.*Estimate\s*:-\s*', '', value)
@@ -187,22 +193,33 @@ class FormParser:
     
     def _clean_name(self, name: str) -> str:
         return name.strip().title()
-    
+
     def _clean_price(self, price: str) -> str:
-        """ V2: Handles 'na' """
-        if not price: return "Not available"
+        """ V2: Handles 'na' and empty prices with custom message """
+        if not price: 
+            return "Waiting for our offer"
+        
         price = price.strip()
-        # --- ADDED 'na' ---
-        if price.lower() in ['n/a', 'na', 'not available', 'unknown', 'not specified']:
-            return "Not available"
-        # --- END ADD ---
+        
+        # --- Handle empty/not specified cases ---
+        if price.lower() in ['n/a', 'na', 'not available', 'unknown', 'not specified', '']:
+            return "Waiting for our offer"
+        
+        # --- Handle "not mentioned" variations ---
+        if any(phrase in price.lower() for phrase in ['not mentioned', 'not provided', 'none', 'null']):
+            return "Waiting for our offer"
+        
+        # --- Original price cleaning logic ---
         price = re.sub(r'^◇.*Estimate\s*:-\s*', '', price)
         price = re.sub(r'^[^a-zA-Z0-9$]*', '', price)
+        
         if price.upper().endswith('K'):
             try:
                 numeric_value = float(price.upper().replace('K', '').replace('$', '').replace(',', '').strip())
                 return f"${numeric_value * 1000:,.0f}"
-            except ValueError: pass
+            except ValueError: 
+                pass
+        
         # Use a more robust number extraction that handles decimals and commas
         numbers = re.findall(r'([\d,]+\.?\d*)', price)
         if numbers:
@@ -216,9 +233,14 @@ class FormParser:
                     return f"${int(numeric_value):,}"
                 else:
                     return f"${numeric_value:,.2f}" # Adjust decimal places if needed
-            except ValueError: pass
-        return price # Return original if no valid number found
-
+            except ValueError: 
+                pass
+        
+        # If we get here and it's still empty/not a valid price, return the custom message
+        if not price or price.strip() == "":
+            return "Waiting for our offer"
+            
+        return price # Return original if no valid number found but has some content
     
     def _clean_property_type(self, prop_type: str) -> str:
         """ V20: Simplified - just extract basic info, AI will do the cleaning """
@@ -1330,45 +1352,74 @@ class RealEstateAutomationSystem:
 
 st.set_page_config(layout="wide")
 st.title("🤖 Real Estate Lead Automation System")
-st.markdown("Upload a lead form `.txt` file to begin analysis.")
+st.markdown("Paste your lead data below or upload a file")
 
 # Check if API key is available in secrets
 if 'DEEPSEEK_API_KEY' in st.secrets:
     st.success("✅ DeepSeek API key found in secrets")
-    # Set the API key as an environment variable
     os.environ["DEEPSEEK_API_KEY"] = st.secrets["DEEPSEEK_API_KEY"]
 else:
-    st.error("❌ DeepSeek API key not found in secrets. Please add 'DEEPSEEK_API_KEY' to your Streamlit secrets.")
+    st.error("❌ DeepSeek API key not found in secrets.")
     st.stop()
 
-# --- File Uploader ---
-st.subheader("📁 Upload Lead File")
-uploaded_file = st.file_uploader("Select a `.txt` lead file", type=["txt"], label_visibility="collapsed")
+# --- Input Method Selection ---
+input_method = st.radio(
+    "Choose input method:",
+    ["📝 Paste Lead Data", "📁 Upload File"],
+    horizontal=True
+)
 
-if uploaded_file is not None:
+lead_data = None
+source_name = "direct_input"
+
+if input_method == "📝 Paste Lead Data":
+    st.subheader("📝 Paste Lead Form Data")
+    lead_text = st.text_area(
+        "Paste your lead form data here:",
+        height=300,
+        placeholder="Paste your lead form data in this format:\n◇List Name:-\n◇Property Type:-\n◇Seller Name:-\n◇Phone Number:-\n◇Address:-\n◇Zillow link:-\n◇Asking Price:-\n◇Zillow Estimate:-\n◇Realtor Estimate:-\n◇Redfin Estimate:-\n◇Reason For Selling:-\n◇Motivation details:-\n◇Mortgage:-\n◇Condition:-\n◇Occupancy:-\n◇Closing time:-\n◇Moving time:-\n◇Best time to call back:-\n◇Agent Name:-\n◇Call recording:-",
+        label_visibility="collapsed"
+    )
     
-    # --- Process Button ---
+    if lead_text.strip():
+        lead_data = lead_text
+        source_name = "pasted_data"
+
+else:  # File upload method
+    st.subheader("📁 Upload Lead File")
+    uploaded_file = st.file_uploader("Select a `.txt` lead file", type=["txt"], label_visibility="collapsed")
+    
+    if uploaded_file is not None:
+        lead_data = uploaded_file.getvalue().decode('utf-8')
+        source_name = uploaded_file.name
+
+# --- Process Button ---
+if lead_data:
+    st.markdown("---")
+    
+    # Show preview
+    with st.expander("📋 Data Preview", expanded=True):
+        st.text(lead_data[:1000] + "..." if len(lead_data) > 1000 else lead_data)
+    
     if st.button("🚀 Process Lead", type="primary"):
-        
-        # 1. Save uploaded file to a temporary path
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.txt') as tmp_file:
-            tmp_file.write(uploaded_file.getvalue())
+        # Create a temporary file for processing
+        with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.txt', encoding='utf-8') as tmp_file:
+            tmp_file.write(lead_data)
             temp_file_path = tmp_file.name
 
         try:
-            # 2. Initialize and run the system
-            # Models are cached, so this is fast after the first run
+            # Initialize and run the system
             system = RealEstateAutomationSystem()
             
-            # 3. Run the main processing logic
+            # Process the lead using your existing method
             with st.container():
-                report_content, report_filename = system.process_lead(temp_file_path, uploaded_file.name)
+                report_content, report_filename = system.process_lead(temp_file_path, source_name)
             
-            # 4. Display the final report
+            # Display the final report
             st.subheader("🎉 Final Enhanced Report")
             st.text_area("Report Content", report_content, height=600)
             
-            # 5. Add a download button
+            # Download button
             st.download_button(
                 label="⬇️ Download Report",
                 data=report_content,
@@ -1378,13 +1429,9 @@ if uploaded_file is not None:
 
         except Exception as e:
             st.error(f"An unexpected error occurred: {e}")
-            # Print the full traceback for debugging
             st.exception(e)
             
         finally:
-            # 6. Clean up the temporary file
+            # Clean up temporary file
             if os.path.exists(temp_file_path):
                 os.unlink(temp_file_path)
-
-
-
