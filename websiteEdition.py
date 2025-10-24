@@ -1319,31 +1319,18 @@ class RealEstateAutomationSystem:
         return form_data
 
 
-# --- STREAMLIT UI (Updated Logic for API Key) ---
+# --- STREAMLIT UI ---
 
 st.set_page_config(layout="wide")
 st.title("🤖 Real Estate Lead Automation System")
 st.markdown("Upload a lead form `.txt` file to begin analysis.")
 
-# --- Check for API Key (Prioritize Environment/Secrets) ---
-api_key_available = False
-api_key_from_env = os.environ.get("DEEPSEEK_API_KEY") # Check environment first (Hugging Face Secrets)
-api_key_input = None # Initialize input variable
+# --- API Key Input ---
+st.subheader("🔑 API Key")
+st.markdown("Please enter your DeepSeek API Key. This will **not** be saved.")
+st.warning("For a permanent deployment, you should set this as a **Streamlit Secret** named `DEEPSEEK_API_KEY`.")
 
-if api_key_from_env:
-    st.success("✅ DeepSeek API Key found in environment/secrets.")
-    api_key_available = True
-    # We will use api_key_from_env later
-else:
-    # Only show the input box if the key wasn't found in the environment
-    st.subheader("🔑 API Key Required")
-    st.markdown("Please enter your DeepSeek API Key. This should be set as a **Repository Secret** named `DEEPSEEK_API_KEY` in Hugging Face for permanent use.")
-    api_key_input = st.text_input("DeepSeek API Key", type="password", label_visibility="collapsed")
-    if api_key_input:
-        api_key_available = True
-        # If input is provided, set it for this session (less secure)
-        os.environ["DEEPSEEK_API_KEY"] = api_key_input
-
+api_key_input = st.text_input("DeepSeek API Key", type="password", label_visibility="collapsed")
 
 # --- File Uploader ---
 st.subheader("📁 Upload Lead File")
@@ -1354,12 +1341,12 @@ if uploaded_file is not None:
     # --- Process Button ---
     if st.button("🚀 Process Lead", type="primary"):
         
-        # 1. Check if API Key is available (either from env or input)
-        if not api_key_available:
-            st.error("❌ DeepSeek API Key is missing. Please set it as a Hugging Face Secret or enter it above.")
+        # 1. Check for API Key
+        if not api_key_input:
+            st.error("❌ Please enter your DeepSeek API Key to proceed.")
         else:
-            # Key is available, proceed with processing
-            # (Note: If using input, os.environ was already set)
+            # Set the API key as an environment variable for this session
+            os.environ["DEEPSEEK_API_KEY"] = api_key_input
             
             # 2. Save uploaded file to a temporary path
             with tempfile.NamedTemporaryFile(delete=False, suffix='.txt') as tmp_file:
@@ -1369,28 +1356,23 @@ if uploaded_file is not None:
             try:
                 # 3. Initialize and run the system
                 # Models are cached, so this is fast after the first run
-                # The __init__ methods will now correctly find the API key from os.environ
                 system = RealEstateAutomationSystem()
                 
-                # Check again if AIQualifier was initialized (depends on key being found in __init__)
-                if not system.ai_qualifier:
-                     st.error("❌ AI Qualifier failed to initialize. Check API Key.")
-                else:
-                    # 4. Run the main processing logic
-                    with st.container():
-                        report_content, report_filename = system.process_lead(temp_file_path, uploaded_file.name)
-                    
-                    # 5. Display the final report
-                    st.subheader("🎉 Final Enhanced Report")
-                    st.text_area("Report Content", report_content, height=600)
-                    
-                    # 6. Add a download button
-                    st.download_button(
-                        label="⬇️ Download Report",
-                        data=report_content,
-                        file_name=report_filename,
-                        mime="text/plain"
-                    )
+                # 4. Run the main processing logic
+                with st.container():
+                    report_content, report_filename = system.process_lead(temp_file_path, uploaded_file.name)
+                
+                # 5. Display the final report
+                st.subheader("🎉 Final Enhanced Report")
+                st.text_area("Report Content", report_content, height=600)
+                
+                # 6. Add a download button
+                st.download_button(
+                    label="⬇️ Download Report",
+                    data=report_content,
+                    file_name=report_filename,
+                    mime="text/plain"
+                )
 
             except Exception as e:
                 st.error(f"An unexpected error occurred: {e}")
