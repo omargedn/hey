@@ -932,7 +932,6 @@ class ReportGenerator:
             ('redfin_estimate', 'Redfin Estimate'),
             ('reason_for_selling', 'Reason For Selling'),
             ('motivation_details', 'Motivation details'),
-            ('personality', 'Seller Personality'), # <-- Personality field is included here
             ('mortgage', 'Mortgage'),
             ('condition', 'Condition'),
             ('occupancy', 'Occupancy'),
@@ -940,6 +939,12 @@ class ReportGenerator:
             ('moving_time', 'Moving time'),
             ('best_time_to_call', 'Best time to call back'),
             ('agent_name', 'Agent Name'),
+            ('call recording', 'Call Recording URL'),
+        ]
+
+
+        self.ai_analysis_fields = [
+            ('personality', 'Seller Personality'),
         ]
 
         # Call recording will be in its own section at the end
@@ -1166,7 +1171,7 @@ class RealEstateAutomationSystem:
         # self.report_generator.set_nlp_model(spacy_model) <-- REMOVED
 
     
-    def process_lead(self, input_file_path: str, input_filename: str) -> (str, str):
+    def process_lead(self, input_file_path: str, input_filename: str) -> list[tuple[str, str]]:
         """Process a single lead file and return report content and filename"""
         
         # Step 1: Parse form data
@@ -1394,5 +1399,6 @@ if uploaded_file is not None:
                 # 7. Clean up the temporary file
                 if os.path.exists(temp_file_path):
                     os.unlink(temp_file_path)
+
 
 
