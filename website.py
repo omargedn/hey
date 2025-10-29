@@ -19,6 +19,17 @@ import requests
 import streamlit as st
 import time
 
+# --- NETWORK TEST ---
+try:
+    st.info("Testing network connection...")
+    response = requests.get("https://www.google.com", timeout=5)
+    st.success(f"Network test successful (Status: {response.status_code})")
+except Exception as e:
+    st.error(f"FATAL NETWORK ERROR: Failed to connect to Google.com.")
+    st.error(f"Details: {e}")
+    st.stop()
+# --- END NETWORK TEST ---
+
 warnings.filterwarnings("ignore")
 os.environ['KMP_DUPLICATE_LIB_OK'] = 'TRUE'
 
@@ -1441,3 +1452,4 @@ if lead_data:
             # Clean up temporary file
             if os.path.exists(temp_file_path):
                 os.unlink(temp_file_path)
+
