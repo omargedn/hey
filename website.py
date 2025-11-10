@@ -383,7 +383,7 @@ class AudioProcessor:
     def _load_model(_self):
         """Load Whisper model on demand"""
         with st.spinner("🧠 Loading Whisper AI model (tiny)... This may take a moment."):
-            model = whisper.load_model("tiny")
+            model = whisper.load_model("medium")
         return model
     
     def transcribe_audio(self, audio_url: str, status_tracker=None) -> Dict[str, Any]:
@@ -613,6 +613,7 @@ class AIRephraser:
             - Keep it to 1-2 sentences maximum
             - DO NOT make up or assume condition details
             - DO NOT use bullet points
+            -Make the answer have all informaation about the condition of the property , but also not too long
 
             Transcript:
             {transcript}
@@ -632,6 +633,7 @@ class AIRephraser:
             - If no mortgage information is discussed, say "No mortgage information discussed"
             - Use clear, direct language
             -take in consideration that the whisper may have some errors , so be careful while giving the final answer
+            -answer must be correct and short 
 
             Transcript:
             {transcript}
@@ -649,6 +651,8 @@ class AIRephraser:
             - If tenant occupied with notice period, specify: "Tenant Occupied (30-day notice given)"
             - If no occupancy information is discussed, say "No occupancy information discussed"
             - Use clear, direct language
+            -dont explain the reason just the occupancy status
+            -make sure the answer is correct and short
 
             Transcript:
             {transcript}
