@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """
 Real Estate Lead Automation System
-V3: Streamlit Web Application
+Streamlined Version - Single Property Only
 (No-Spacy Version for compatibility)
 """
+import time
+from datetime import datetime
 import json 
 from openai import OpenAI
 import os
@@ -13,22 +15,9 @@ import warnings
 from typing import Dict, List, Optional, Any
 from dataclasses import dataclass
 import whisper
-# import spacy <-- REMOVED
-# from spacy.tokens import Doc <-- REMOVED
 import requests
 import streamlit as st
 import time
-
-# --- NETWORK TEST ---
-try:
-    st.info("Testing network connection...")
-    response = requests.get("https://www.google.com", timeout=5)
-    st.success(f"Network test successful (Status: {response.status_code})")
-except Exception as e:
-    st.error(f"FATAL NETWORK ERROR: Failed to connect to Google.com.")
-    st.error(f"Details: {e}")
-    st.stop()
-# --- END NETWORK TEST ---
 
 warnings.filterwarnings("ignore")
 os.environ['KMP_DUPLICATE_LIB_OK'] = 'TRUE'
@@ -40,58 +29,85 @@ class FieldData:
     source: str
     confidence: float = 1.0
 
-# --- NLPAnalyzer Class (Spacy Removed) ---
-class NLPAnalyzer:
-    """
-    Analyzes conversation transcripts using regex for motivation.
-    'spacy' has been removed to ensure build compatibility.
-    """
+class ProcessStatus:
     def __init__(self):
-        # self.nlp = self._load_spacy_model() <-- REMOVED
-        pass # No model to load
+        self.stages = {
+            'file_upload': {'status': 'waiting', 'message': 'File Upload'},
+            'data_parsing': {'status': 'waiting', 'message': 'Data Parsing'}, 
+            'audio_transcription': {'status': 'waiting', 'message': 'Audio Transcription'},
+            'ai_analysis': {'status': 'waiting', 'message': 'AI Analysis'},
+            'qualification': {'status': 'waiting', 'message': 'Lead Qualification'},
+            'report_generation': {'status': 'waiting', 'message': 'Report Generation'}
+        }
+    
+    def update_stage(self, stage, status, message=None):
+        self.stages[stage]['status'] = status
+        if message:
+            self.stages[stage]['message'] = message
+    
+    def display_status(self):
+        for stage, info in self.stages.items():
+            status = info['status']
+            if status == 'processing': icon = '🔄'
+            elif status == 'complete': icon = '✅' 
+            elif status == 'warning': icon = '⚠️'
+            elif status == 'failed': icon = '❌'
+            else: icon = '⚪'
+            
+            st.write(f"{icon} {info['message']}")
 
-    # _load_spacy_model method <-- REMOVED
+# --- NLPAnalyzer Class ---
+class NLPAnalyzer:
+    """Analyzes conversation transcripts using regex for motivation."""
+    
+    def __init__(self):
+        pass
 
     def analyze_transcript(self, transcript: str) -> Dict[str, str]:
-        """
-        Run the NLP pipeline on a transcript.
-        """
+        """Run the NLP pipeline on a transcript."""
         if not transcript:
             return {
-                'motivation': "No transcript provided"
+                'motivation': "No transcript provided",
+                'highlights': "No transcript provided"  
             }
 
-        # doc = self.nlp(transcript) <-- REMOVED
         transcript_lower = transcript.lower()
-        
-        # Run individual analysis functions
-        motivation = self._analyze_motivation(transcript_lower) # <-- MODIFIED
+        motivation = self._analyze_motivation(transcript_lower)
         
         return {
-            'motivation': motivation
+            'motivation': motivation,
+            'highlights': "To be analyzed by AI"
         }
 
-    def _analyze_motivation(self, transcript_lower: str) -> str: # <-- MODIFIED
-        """
-        Contextually analyze motivation/timeline.
-        """
+    def _analyze_motivation(self, transcript_lower: str) -> str:
+        """Contextually analyze motivation/timeline."""
         high_motivation_patterns = [
             r"asap", r"soon as possible", r"immediate(ly)?",
             r"urgent", r"quick(ly)?", r"fast", r"motivated", r"ready",
-            r"i can sell it right now"
+            r"i can sell it right now", r"need to sell", r"have to sell",
+            r"time sensitive", r"deadline", r"quick sale", r"fast closing"
         ]
         if any(re.search(p, transcript_lower) for p in high_motivation_patterns):
             return "Highly motivated - wants quick sale"
         
         low_motivation_patterns = [
-            r"flexible", r"no rush", r"whenever", r"listing it", r"testing (the )?market"
+            r"flexible", r"no rush", r"whenever", r"listing it", 
+            r"testing (the )?market", r"just looking", r"seeing what",
+            r"not in a hurry", r"take your time", r"whenever you"
         ]
         if any(re.search(p, transcript_lower) for p in low_motivation_patterns):
             return "Flexible timeline / Testing market"
         
+        moderate_patterns = [
+            r"want to sell", r"looking to sell", r"interested in selling",
+            r"considering offers", r"ready to move", r"planning to sell"
+        ]
+        if any(re.search(p, transcript_lower) for p in moderate_patterns):
+            return "Moderately motivated - open to selling"
+        
         return "No motivation details discussed"
 
-# --- FormParser Class (Unchanged) ---
+# --- FormParser Class ---
 class FormParser:
     """Parse real estate lead forms with enhanced field processing"""
     
@@ -123,7 +139,6 @@ class FormParser:
         """Parse lead file into structured data"""
         with open(file_path, 'r', encoding='utf-8') as f:
             content = f.read()
-        
         return self.parse_text(content)
     
     def parse_text(self, text: str) -> Dict[str, FieldData]:
@@ -153,23 +168,25 @@ class FormParser:
             for pattern in patterns:
                 matches = re.findall(pattern, text, re.IGNORECASE | re.MULTILINE)
                 if matches:
-                    # Take the last match to avoid duplicates
                     value = matches[-1].strip()
                     
-                    # Special handling for price fields to detect "not mentioned"
-                    if 'price' in name.lower() or 'estimate' in name.lower():
-                        if not value or value in ['', 'Not specified', 'N/A', 'n/a', 'Not mentioned', 'None']:
+                    if 'asking price' in name.lower():
+                        if (not value or 
+                            value.lower() in ['', 'not specified', 'n/a', 'na', 'not available', 'unknown', 'not mentioned', 'not provided', 'none', 'null'] or
+                            any(phrase in value.lower() for phrase in ['not mentioned', 'not provided', 'none', 'null', 'not discussed', 'no price', 'no asking'])):
                             return "Waiting for our offer"
+                        
+                        if 'negotiable' in value.lower():
+                            return value + " (negotiable)"
                     
                     if value and value not in ['', 'Not specified', 'N/A', 'n/a']:
-                        # Clean up malformed prefixes
                         value = re.sub(r'^◇.*Estimate\s*:-\s*', '', value)
                         value = re.sub(r'^[^a-zA-Z0-9$]*', '', value)
                         return value
         return None
     
     def _clean_field(self, field: str, value: str) -> str:
-        """Clean and normalize field values with enhanced processing"""
+        """Clean and normalize field values"""
         cleaners = {
             'phone_number': self._clean_phone,
             'seller_name': self._clean_name,
@@ -191,7 +208,6 @@ class FormParser:
         
         cleaner = cleaners.get(field, lambda x: x.strip())
         return cleaner(value)
-
     
     def _clean_phone(self, phone: str) -> str:
         """Normalize phone number format"""
@@ -206,67 +222,56 @@ class FormParser:
         return name.strip().title()
 
     def _clean_price(self, price: str) -> str:
-        """ V2: Handles 'na' and empty prices with custom message """
+        """Enhanced price cleaner that preserves negotiable notation"""
         if not price: 
-            return "Waiting for our offer"
+            return price
         
         price = price.strip()
+        is_negotiable = "(negotiable)" in price
+        base_price = price.replace("(negotiable)", "").strip()
         
-        # --- Handle empty/not specified cases ---
-        if price.lower() in ['n/a', 'na', 'not available', 'unknown', 'not specified', '']:
-            return "Waiting for our offer"
+        if base_price == "Waiting for our offer":
+            return base_price
         
-        # --- Handle "not mentioned" variations ---
-        if any(phrase in price.lower() for phrase in ['not mentioned', 'not provided', 'none', 'null']):
-            return "Waiting for our offer"
+        base_price = re.sub(r'^◇.*Estimate\s*:-\s*', '', base_price)
+        base_price = re.sub(r'^[^a-zA-Z0-9$]*', '', base_price)
         
-        # --- Original price cleaning logic ---
-        price = re.sub(r'^◇.*Estimate\s*:-\s*', '', price)
-        price = re.sub(r'^[^a-zA-Z0-9$]*', '', price)
-        
-        if price.upper().endswith('K'):
+        if base_price.upper().endswith('K'):
             try:
-                numeric_value = float(price.upper().replace('K', '').replace('$', '').replace(',', '').strip())
-                return f"${numeric_value * 1000:,.0f}"
+                numeric_value = float(base_price.upper().replace('K', '').replace('$', '').replace(',', '').strip())
+                cleaned_price = f"${numeric_value * 1000:,.0f}"
+                return f"{cleaned_price} (negotiable)" if is_negotiable else cleaned_price
             except ValueError: 
                 pass
         
-        # Use a more robust number extraction that handles decimals and commas
-        numbers = re.findall(r'([\d,]+\.?\d*)', price)
+        numbers = re.findall(r'([\d,]+\.?\d*)', base_price)
         if numbers:
-            # Find the number with the largest magnitude, removing formatting for comparison
-            largest_num_str = max(numbers, key=lambda x: float(x.replace(',', '').replace('$', '')))
-            clean_num_str = largest_num_str.replace(',', '').replace('$', '')
-            try:
-                numeric_value = float(clean_num_str)
-                # Format as integer if whole number, else keep decimals
-                if numeric_value == int(numeric_value):
-                    return f"${int(numeric_value):,}"
-                else:
-                    return f"${numeric_value:,.2f}" # Adjust decimal places if needed
-            except ValueError: 
-                pass
-        
-        # If we get here and it's still empty/not a valid price, return the custom message
-        if not price or price.strip() == "":
-            return "Waiting for our offer"
+            valid_numbers = []
+            for num_str in numbers:
+                clean_num_str = num_str.replace(',', '').replace('$', '').strip()
+                if clean_num_str:
+                    try:
+                        numeric_value = float(clean_num_str)
+                        valid_numbers.append((num_str, numeric_value))
+                    except ValueError:
+                        continue
             
-        return price # Return original if no valid number found but has some content
-    
+            if valid_numbers:
+                largest_num_str, largest_value = max(valid_numbers, key=lambda x: x[1])
+                if largest_value == int(largest_value):
+                    cleaned_price = f"${int(largest_value):,}"
+                else:
+                    cleaned_price = f"${largest_value:,.2f}"
+                return f"{cleaned_price} (negotiable)" if is_negotiable else cleaned_price
+        
+        return price
+
     def _clean_property_type(self, prop_type: str) -> str:
-        """ V20: Simplified - just extract basic info, AI will do the cleaning """
-        original = prop_type.strip()
-        
-        # Just do basic cleanup to remove form prefixes and excessive whitespace
-        cleaned = original
-        
-        # Remove form prefixes
+        """Basic property type cleanup"""
+        cleaned = prop_type.strip()
         cleaned = re.sub(r'^◇\s*Property\s*Type\s*:-\s*', '', cleaned, flags=re.IGNORECASE)
         cleaned = re.sub(r'^◇\s*Property\s*Type\s*:\s*', '', cleaned, flags=re.IGNORECASE)
-        
-        # Basic cleanup
         cleaned = re.sub(r'\s+', ' ', cleaned).strip()
-        
         return cleaned
 
     def _clean_time(self, time: str) -> str:
@@ -279,25 +284,21 @@ class FormParser:
         return time_map.get(time, time.title())
     
     def _clean_occupancy(self, occupancy: str) -> str:
-        """Enhanced occupancy cleaner that handles detailed descriptions"""
+        """Enhanced occupancy cleaner"""
         occupancy_lower = occupancy.lower().strip()
         
-        # Handle "na" and empty values
         if occupancy_lower in ['n/a', 'na', 'not available', 'unknown', 'not specified', '']:
             return "Not specified"
         
-        # More specific pattern matching
         if 'vacant lot' in occupancy_lower:
             return "Vacant Lot"
         
-        # Check for 30-day notice FIRST (highest priority)
         if any(phrase in occupancy_lower for phrase in [
             "30 day notice", "30-day notice", "30 days notice", 
             "notice to vacate", "submitted notice", "given notice"
         ]):
             return "Tenant Occupied (30-day notice given)"
         
-        # Check for vacant patterns
         vacant_patterns = [
             'vacant', 'empty', 'no one living', 'nobody living', 
             'unoccupied', 'not occupied'
@@ -305,7 +306,6 @@ class FormParser:
         if any(pattern in occupancy_lower for pattern in vacant_patterns):
             return "Vacant"
         
-        # Check for tenant occupied patterns
         tenant_patterns = [
             'tenant', 'rented', 'renting', 'occupied by tenant', 'renter',
             'currently rented', 'has a tenant', 'tenant occupied', 'lease'
@@ -313,7 +313,6 @@ class FormParser:
         if any(pattern in occupancy_lower for pattern in tenant_patterns):
             return "Tenant Occupied"
         
-        # Check for owner occupied patterns
         owner_patterns = [
             'owner occupied', 'primary residence', 'i live here', 'we live here',
             'owner-occupied', 'living in it', 'reside there'
@@ -321,14 +320,12 @@ class FormParser:
         if any(pattern in occupancy_lower for pattern in owner_patterns):
             return "Owner Occupied"
         
-        # Return original but properly capitalized
         return occupancy.strip().capitalize()
     
     def _clean_mortgage(self, mortgage: str) -> str:
-        """Enhanced mortgage cleaner that handles 'na' and other common values"""
+        """Enhanced mortgage cleaner"""
         mortgage_lower = mortgage.lower().strip()
         
-        # Handle "na", "n/a", etc.
         if mortgage_lower in ['n/a', 'na', 'not available', 'unknown', 'not specified', '']:
             return "Not available"
         
@@ -350,7 +347,7 @@ class FormParser:
             return "Property in good condition"
         if 'vacant lot' in condition_lower:
             return "Vacant lot"
-        return condition # Return original if no clear match
+        return condition
     
     def _clean_reason(self, reason: str) -> str:
         reason_lower = reason.lower()
@@ -375,109 +372,156 @@ class FormParser:
             return "Motivated"
         return "Standard motivation"
 
-# --- AudioProcessor Class (with Caching) ---
+# --- AudioProcessor Class ---
 class AudioProcessor:
     """Handle audio download and transcription using local Whisper"""
     
     def __init__(self):
         self.whisper_model = self._load_model()
     
-    @st.cache_resource  # <-- ADDED: Cache the Whisper model
+    @st.cache_resource
     def _load_model(_self):
         """Load Whisper model on demand"""
-        with st.spinner("🧠 Loading Whisper AI model (small)... This may take a moment."):
-            model = whisper.load_model("small")
+        with st.spinner("🧠 Loading Whisper AI model (tiny)... This may take a moment."):
+            model = whisper.load_model("tiny")
         return model
     
-    def transcribe_audio(self, audio_url: str) -> Dict[str, Any]:
-        """Transcribe audio from URL using local Whisper"""
+    def transcribe_audio(self, audio_url: str, status_tracker=None) -> Dict[str, Any]:
+        """Transcribe audio from URL with time estimates and failure handling"""
+        
+        if status_tracker:
+            status_tracker.update_stage('audio_transcription', 'processing', 'Starting audio transcription...')
+        
         result = {
             'transcript': None,
-            'language': None,
+            'language': None, 
             'success': False,
             'error': None
         }
 
         if not audio_url or 'http' not in audio_url:
-            result['error'] = "Invalid audio URL"
+            error_msg = "Invalid audio URL"
+            result['error'] = error_msg
+            if status_tracker:
+                status_tracker.update_stage('audio_transcription', 'failed', error_msg)
             return result
 
         temp_path = None
+        progress_placeholder = None 
+        progress_bar = None 
         try:
-            with st.spinner(f"🎧 Downloading audio: {audio_url}"):
-                response = requests.get(audio_url, timeout=60)
-                response.raise_for_status()
-
-                with tempfile.NamedTemporaryFile(delete=False, suffix='.wav') as f:
-                    f.write(response.content)
-                    temp_path = f.name
+            if status_tracker:
+                status_tracker.update_stage('audio_transcription', 'processing', 'Downloading audio file...')
             
-            # Model is already loaded
-            model = self.whisper_model
+            response = requests.get(audio_url, timeout=60)
+            response.raise_for_status()
 
-            with st.spinner("🧠 Transcribing audio... (This is the slow part)"):
-                # Note: We are NOT using speaker diarization here.
-                # This is a simple transcription.
-                transcription = model.transcribe(temp_path)
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.wav') as f:
+                f.write(response.content)
+                temp_path = f.name
+            
+            audio_duration = self._estimate_audio_duration(temp_path)
+            estimated_time = self._calculate_transcription_time(audio_duration)
+            
+            if status_tracker:
+                status_tracker.update_stage('audio_transcription', 'processing', 
+                                          f'Transcribing audio (~{estimated_time}s remaining)...')
+
+            progress_placeholder = st.empty()
+            progress_bar = st.progress(0)
+
+            progress_bar.progress(0.1)
+            progress_placeholder.text(f"Starting transcription... (~{estimated_time}s remaining)")
+
+            model = self.whisper_model
+            transcription = model.transcribe(temp_path)
+
+            progress_bar.progress(1.0)
+            progress_placeholder.text("Transcription complete!")
+
+            progress_placeholder.empty()
+            progress_bar.empty()
+
+            if not transcription['text'].strip():
+                raise Exception("Transcription returned empty content")
 
             result['transcript'] = transcription['text'].strip()
             result['language'] = transcription.get('language', 'en')
             result['success'] = True
+            
+            if status_tracker:
+                status_tracker.update_stage('audio_transcription', 'complete', 'Transcription completed successfully')
+            
             st.success("✅ Transcription complete")
 
         except Exception as e:
-            result['error'] = str(e)
-            st.error(f"❌ Transcription failed: {e}")
+            error_msg = str(e)
+            result['error'] = error_msg
+            
+            try:
+                progress_placeholder.empty()
+                progress_bar.empty()
+            except:
+                pass
+                
+            if status_tracker:
+                status_tracker.update_stage('audio_transcription', 'failed', f'Transcription failed: {error_msg}')
+            
+            st.error(f"❌ Transcription failed: {error_msg}")
+            
         finally:
             if temp_path and os.path.exists(temp_path):
                 os.unlink(temp_path)
-
+                
         return result
 
-# --- ConversationSummarizer Class (Unchanged) ---
+    def _estimate_audio_duration(self, file_path: str) -> int:
+        """Estimate audio duration in seconds"""
+        try:
+            file_size = os.path.getsize(file_path)
+            return max(30, min(600, file_size / (1024 * 1024) * 60))
+        except:
+            return 60
+
+    def _calculate_transcription_time(self, audio_duration: int) -> int:
+        """Calculate estimated transcription time in seconds"""
+        base_time = 45
+        return base_time + int(audio_duration * 1.5)
+
+# --- ConversationSummarizer Class ---
 class ConversationSummarizer:
-    """
-    Generates a summary of the conversation.
-    This is kept separate from NLPAnalyzer to focus on
-    summary generation vs. raw data extraction.
-    """
+    """Generates a summary of the conversation."""
+    
     def __init__(self):
-        pass # No model needed, will receive extracted data
+        pass
 
     def summarize(self, transcript: str, nlp_data: Dict[str, str]) -> str:
         """Generate enhanced summary based on extracted NLP data"""
         if not transcript:
             return "No transcript available for summarization."
         
-        # Use the structured data from NLPAnalyzer to build a reliable summary
         key_points = []
         
-        # Reason
         reason = nlp_data.get('reason', '')
         if reason and "no reason" not in reason.lower():
             key_points.append(f"Reason for Selling: {reason}")
         
-        # Motivation
         motivation = nlp_data.get('motivation', '')
         if motivation and "no motivation" not in motivation.lower():
             key_points.append(f"Seller Motivation: {motivation}")
             
-        # Personality
         personality = nlp_data.get('personality', '')
         if personality and "did not share" not in personality.lower():
             key_points.append(f"Seller Personality: {personality}")
 
-        # Condition
         condition = nlp_data.get('condition', '')
         if condition and "no specific" not in condition.lower():
             key_points.append(f"Property Condition: {condition}")
             
-        # Mortgage
         mortgage = nlp_data.get('mortgage', '')
         if mortgage and "no mortgage" not in mortgage.lower():
             key_points.append(f"Mortgage Status: {mortgage}")
 
-        # Occupancy
         occupancy = nlp_data.get('tenant', '')
         if occupancy and "no occupancy" not in occupancy.lower():
             key_points.append(f"Occupancy: {occupancy}")
@@ -500,61 +544,43 @@ class ConversationSummarizer:
         summary_lines.append("")
         return "\n".join(summary_lines)
 
-# --- AIRephraser Class (with Caching) ---
+# --- AIRephraser Class ---
 class AIRephraser:
-    """
-    V11: Complete AI analysis for all major conversation topics
-    Handles: Reason, Condition, Mortgage, Occupancy
-    """
+    """Complete AI analysis for all major conversation topics"""
     
     def __init__(self):
-        """
-        Initialize the AI Rephraser with the DeepSeek API client.
-        """
         self.client = None
         self.model = "deepseek-chat"
         self._initialize_client()
     
     def _initialize_client(self):
-        """
-        Initialize the API client with caching.
-        """
         self.client = self._get_cached_client()
     
     @st.cache_resource
     def _get_cached_client(_self):
-        """
-        Cached method to get the API client.
-        """
         try:
-            # Get key from Streamlit secrets
             api_key = st.secrets["DEEPSEEK_API_KEY"]
-
             client = OpenAI(
                 api_key=api_key,
                 base_url="https://api.deepseek.com/v1"
             )
             return client
-        
         except Exception as e:
             st.error(f"❌ Failed to initialize DeepSeek client: {e}")
             return None
 
     def rephrase(self, topic_name: str, transcript: str) -> str:
-        """
-        Analyzes transcript using the DeepSeek API for a specific topic.
-        """
+        """Analyzes transcript using the DeepSeek API for a specific topic."""
         if not self.client:
             return f"DeepSeek API client not initialized. Cannot analyze {topic_name}."
             
-        if not transcript or len(transcript) < 25:
+        if not transcript or len(transcript) < 2:
             return "Transcript too short for analysis."
 
         question = ""
         system_prompt = ""
 
         if topic_name == "Reason for Selling":
-            # --- REASON FOR SELLING PROMPT ---
             system_prompt = f"""
             You are an expert real estate call analyst.
             Your job is to analyze the following call transcript and rephrase
@@ -575,44 +601,37 @@ class AIRephraser:
             question = "What is the seller's stated reason for selling the property?"
 
         elif topic_name == "Property Condition":
-            # --- PROPERTY CONDITION PROMPT ---
             system_prompt = f"""
             You are an expert real estate call analyst.
             Your job is to analyze the following call transcript and summarize
-            the seller's description of the property's condition into a narrative paragraph.
+            the seller's description of the property's condition into a clear, concise statement.
             
             CRITICAL INSTRUCTIONS:
-            - Combine all details (repairs, roof, updates, etc.) into one flowing statement.
-            - DO NOT use bullet points.
-            - DO NOT add "The seller stated:". Just write the paragraph.
-            - EXAMPLE: "The property is in good shape but needs a new roof which will cost $9,500. The interior has been well-maintained and the house is ready for immediate occupancy."
-            - If no condition is mentioned, say "No specific condition details discussed".
-            - Focus on key issues: roof, HVAC, foundation, cosmetic updates, major repairs.
-            - Mention specific costs if discussed.
+            - Focus on ACTUAL condition details mentioned: roof, HVAC, foundation, repairs needed, updates, age, etc.
+            - If NO specific condition details are mentioned, return: "No specific condition details discussed"
+            - Be realistic and factual - only mention what was actually discussed
+            - Keep it to 1-2 sentences maximum
+            - DO NOT make up or assume condition details
+            - DO NOT use bullet points
 
             Transcript:
             {transcript}
             """
-            question = "What is the seller's description of the property's condition?"
+            question = "What specific details about the property's condition were mentioned in the conversation?"
 
         elif topic_name == "Mortgage Status":
-            # --- MORTGAGE STATUS PROMPT ---
             system_prompt = f"""
             You are an expert real estate call analyst.
             Analyze this conversation transcript and determine the mortgage status of the property.
             
             CRITICAL INSTRUCTIONS:
             - Be VERY specific about mortgage status
+            - put in consider the input value of mortage of the form data , compare it with the transcript and give your final answer 
             - If mortgage exists, mention any amounts discussed
             - If owned free and clear, state that clearly
             - If no mortgage information is discussed, say "No mortgage information discussed"
             - Use clear, direct language
-            - Examples of good responses:
-              * "Owned free and clear - no mortgage"
-              * "Mortgage exists - owes approximately $50,000"
-              * "Mortgage exists but amount not specified"
-              * "No mortgage information discussed in the conversation"
-              - dont make the answer to large , keep it simple ,ex : owned and free clear , mortgage exists
+            -take in consideration that the whisper may have some errors , so be careful while giving the final answer
 
             Transcript:
             {transcript}
@@ -620,7 +639,6 @@ class AIRephraser:
             question = "What is the mortgage status of the property based on the conversation?"
 
         elif topic_name == "Occupancy Status":
-            # --- OCCUPANCY STATUS PROMPT ---
             system_prompt = f"""
             You are an expert real estate call analyst.
             Analyze this conversation transcript and determine the occupancy status of the property.
@@ -631,14 +649,6 @@ class AIRephraser:
             - If tenant occupied with notice period, specify: "Tenant Occupied (30-day notice given)"
             - If no occupancy information is discussed, say "No occupancy information discussed"
             - Use clear, direct language
-            - Examples of good responses:
-              * "Tenant Occupied"
-              * "Owner Occupied" 
-              * "Vacant"
-              * "Tenant Occupied (30-day notice given)"
-              * "Vacant Lot"
-              * "No occupancy information discussed"
-              - dont give reason for occupancy just give the status
 
             Transcript:
             {transcript}
@@ -646,7 +656,6 @@ class AIRephraser:
             question = "What is the occupancy status of this property based on the conversation?"
 
         elif topic_name == "Seller Personality":
-            # --- SELLER PERSONALITY PROMPT ---
             system_prompt = f"""
             You are an expert real estate call analyst.
             Analyze this conversation transcript to understand the seller's personality and communication style.
@@ -664,52 +673,55 @@ class AIRephraser:
             question = "Summarize the seller's personality and communication style based on the transcript."
             
         elif topic_name == "Property Type":
-            # --- PROPERTY TYPE CLEANING PROMPT ---
             system_prompt = f"""
-            You are an expert real estate data formatter. Your job is to clean and standardize property type descriptions.
-            
+            You are an expert real estate data formatter. Your job is to clean and standardize a raw property type description from a form.
+
             CRITICAL FORMATTING RULES:
-            1. Format: "PropertyType (X unit), Y Bedrooms, Z Bathrooms, SQFT Square Feet"
-            2. Always put unit count in parentheses like "(2 unit)"
-            3. Use commas to separate all elements
-            4. Capitalize properly: "Duplex", "MultiFamily", "Apartment complex"
-            5. Use plural/singular correctly: "1 Bedroom", "2 Bedrooms"
-            6. Keep square footage numbers as-is: "1,344" stays "1,344"
-            7. Remove words like: "rental property", "investment", "~", "approx", "approximately"
-            8. If square feet has "each", keep it: "500 Square Feet each"
+            1. Final Format: "PropertyType (X unit), Y Bedrooms, Z Bathrooms, SQFT Square Feet"
+            2. Commas are required: Use commas to separate all elements.
+            3. No Slashes: DO NOT use slashes (/).
+            4. No Abbreviations: DO NOT use abbreviations like 'bed', 'beds', 'ba', 'sf', 'sqft'. Always write out "Bedrooms", "Bathrooms", "Square Feet".
+            5. Capitalization: Capitalize property types (e.g., "Single Family", "Duplex", "MultiFamily").
+            6. Units: Always include a unit count in parentheses, e.g., "(1 unit)", "(2 unit)".
+            7. Plurals: Use plurals correctly: "1 Bedroom", "2 Bedrooms", "1 Bathroom", "2.5 Bathrooms".
+            8. Vacant Land: If it is land, the format is "Vacant land, X acres".
+
+            You must always reformat the input. Never return the raw input.
+            Always follow the format exactly.
+            make sure everything is correct , the number of the bedrooms and bathrooms are correct
+            please make sure of it before giving the final answer
             
-            EXAMPLES:
-            Input: "Single-family home (3 bed, 1 bath, ~1,344 sq ft)"
-            Output: "Duplex (2 unit), 3 Bedrooms, 1 Bathroom, 1,344 Square Feet"
-            
-            Input: "MultiFamily (2 units), 3 bedrooms and 2 bathrooms, 1,344 sqft"
-            Output: "MultiFamily (2 unit), 3 Bedrooms, 2 Bathrooms, 1,344 Square Feet"
-            
-            Input: "Apartment complex (11 units), 1 bedroom and 1 bathroom, 500 sqft each"
-            Output: "Apartment complex (11 unit), 1 Bedroom, 1 Bathroom, 500 Square Feet each"
-            
-            Input: "11 units [ 1 Bed , 1 Bath  . 500 sqft ] each"
-            Output: "Apartment complex (11 unit), 1 Bedroom, 1 Bathroom, 500 Square Feet each"
-            
-            Input: "4-plex (4 units), 2 beds 1 bath each, 850 sqft"
-            Output: "4-plex (4 unit), 2 Bedrooms, 1 Bathroom, 850 Square Feet each"
-            
-            Input: "triplex, 3 bedrooms 2 baths, 1200 sq ft"
-            Output: "Triplex (3 unit), 3 Bedrooms, 2 Bathrooms, 1,200 Square Feet"
-            
-            Input: "single family residence, 4 bed 2.5 bath, 2,200 sq ft"
-            Output: "Single family residence, 4 Bedrooms, 2.5 Bathrooms, 2,200 Square Feet"
-            
-            Input: "vacant land, 0.5 acres"
-            Output: "Vacant land, 0.5 acres"
-            
-            ALWAYS follow the format exactly. If information is missing, use reasonable defaults.
-            If no unit count is specified but it's a multi-unit property, infer it from the type.
-            
-            Property to clean:
+            Property type from form to clean:
             {transcript}
             """
-            question = "Clean and format this property type description according to the rules."
+            question = "Clean and format this property type description from the form according to the rules."
+
+        elif topic_name == "Important Highlights":
+            system_prompt = f"""
+            You are an expert real estate call analyst.
+            Analyze this conversation transcript and identify the 3-5 most important highlights that a real estate investor should know.
+            
+            FOCUS ON:
+            - Urgent motivations or timelines
+            - Financial pressures (taxes, mortgage, repairs needed)
+            - Property condition issues or recent updates
+            - Unique selling circumstances (inheritance, divorce, relocation)
+            - Willingness to negotiate or flexibility
+            - Any red flags or opportunities
+            
+            FORMATTING RULES:
+            - Return as bullet points (use • character)
+            - Maximum 5 bullet points
+            - Each bullet should be 1-2 sentences max
+            - Be specific and actionable
+            - Focus on what matters for investment decisions
+            
+            If no important highlights are found, return: "No critical highlights identified in the conversation."
+            
+            Transcript:
+            {transcript}
+            """
+            question = "What are the most important highlights from this conversation that a real estate investor should know?"
 
         else:
             return f"No analysis defined for topic: {topic_name}"
@@ -726,28 +738,27 @@ class AIRephraser:
             )
             
             answer = chat_completion.choices[0].message.content.strip()
-                
+            
+            if topic_name == "Property Type":
+                if '/' in answer or 'beds' in answer.lower():
+                    return transcript 
+            
             return answer
 
         except Exception as e:
             st.error(f"❌ DEEPSEEK API ERROR: {e}")
             return f"Error analyzing {topic_name} with API."
-            
+
+# --- AIQualifier Class ---
 class AIQualifier:
-    """
-    Analyzes final lead data against a set of business rules
-    by calling the DeepSeek AI for a final qualification.
-    """
+    """Analyzes final lead data against a set of business rules"""
+    
     def __init__(self, client):
-        """
-        Initialize the qualifier with a shared API client.
-        """
         self.client = client
         self.model = "deepseek-chat"
-        self.re = re # For parsing prices in the fallback
+        self.re = re
 
     def _get_fallback_results(self, error_msg: str) -> Dict[str, Any]:
-        """Returns a standard error dictionary if the AI fails."""
         return {
             'total_score': 0,
             'verdict': "ERROR",
@@ -760,17 +771,12 @@ class AIQualifier:
         }
 
     def _get_val(self, data: Dict[str, FieldData], key: str) -> str:
-        """Helper to safely get a value from the lead data dict."""
         return data.get(key, FieldData("Not Provided", "")).value
 
     def qualify(self, lead_data: Dict[str, FieldData]) -> Dict[str, Any]:
-        """
-        Runs the AI-powered qualification logic on the final, merged lead data.
-        """
         if not self.client:
             return self._get_fallback_results("API client not initialized")
 
-        # --- 1. Format the data for the AI prompt ---
         try:
             data_summary = f"""
             LEAD DATA:
@@ -785,7 +791,6 @@ class AIQualifier:
         except Exception as e:
             return self._get_fallback_results(f"Failed to format data: {e}")
 
-        # --- 2. Create the AI system prompt ---
         system_prompt = f"""
         You are an expert real estate lead qualification analyst. Your job is to analyze the following lead data and score it according to a strict set of rules.
 
@@ -834,7 +839,6 @@ class AIQualifier:
         -   Do not include any text outside the JSON.
         """
 
-        # --- 3. Call the API and parse the JSON response ---
         try:
             with st.spinner("⚖️ Calling DeepSeek AI for final qualification..."):
                 chat_completion = self.client.chat.completions.create(
@@ -843,17 +847,14 @@ class AIQualifier:
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": "Analyze the lead data and return the qualification JSON."}
                     ],
-                    temperature=0.0, # We want deterministic, rule-based output
+                    temperature=0.0,
                     max_tokens=500,
-                    response_format={"type": "json_object"} # Ask for JSON output
+                    response_format={"type": "json_object"}
                 )
             
             response_text = chat_completion.choices[0].message.content.strip()
-            
-            # Parse the JSON
             results = json.loads(response_text)
             
-            # Simple validation to ensure the structure is correct
             if 'total_score' not in results or 'breakdown' not in results:
                 raise ValueError("AI response missing required keys")
                 
@@ -862,50 +863,34 @@ class AIQualifier:
 
         except json.JSONDecodeError as e:
             st.error(f"❌ AI QUALIFICATION ERROR: Failed to decode JSON: {e}")
-            st.error(f"   Raw AI Response: {response_text}")
             return self._get_fallback_results(f"AI returned invalid JSON: {e}")
         except Exception as e:
             st.error(f"❌ AI QUALIFICATION ERROR: {e}")
             return self._get_fallback_results(str(e))
 
-# --- DataValidator Class (Unchanged) ---
+# --- DataValidator Class ---
 class DataValidator:
     """Validate and resolve data contradictions"""
     
     def clean_reason_field(self, reason_text: str, max_length: int = 500) -> str:
-        """Prevent over-population of reason field"""
         if not reason_text or reason_text.strip() == "" or reason_text == "None":
             return "No reason discussed in conversation"
         
-        # If it's one of our "default" messages, just return it
         if any(phrase in reason_text.lower() for phrase in ['no reason', 'did not discuss', 'not specified']):
             return reason_text
         
-        # Truncate if needed
         if len(reason_text) > max_length:
             return reason_text[:max_length-3] + "..."
         
         return reason_text.strip()
-    
-    def validate_price_data(self, form_price: str, market_estimates: Dict[str, str]) -> Dict[str, Any]:
-        """Validate price data against market estimates"""
-        # ... (This logic from your original script is good and remains unchanged) ...
-        return {'value': form_price, 'is_realistic': True, 'notes': []} # Placeholder
-        
-    def _extract_numeric_price(self, price_str: str) -> Optional[float]:
-        """Extract numeric value from price string"""
-        # ... (This logic from your original script is good and remains unchanged) ...
-        return None # Placeholder
 
-# --- DataMerger Class (Unchanged) ---
+# --- DataMerger Class ---
 class DataMerger:
     """Intelligently merge form data with conversation insights"""
     
     def merge(self, form_data: Dict[str, FieldData], transcript: str, audio_analysis: Dict[str, Any]) -> Dict[str, FieldData]:
-        """Merge data with intelligent field completion"""
         merged = form_data.copy()
         
-        # FIX MOVING TIME FOR VACANT LOTS
         moving_time_data = merged.get('moving_time')
         moving_time_value = moving_time_data.value if moving_time_data else ""
 
@@ -932,18 +917,13 @@ class DataMerger:
         
         return merged
 
-# --- ReportGenerator Class (Spacy Removed) ---
+# --- ReportGenerator Class ---
 class ReportGenerator:
-    """
-    Generate professional text reports with enhanced data.
-    V4: Form data first, in a single block as specified by user.
-    """
+    """Generate professional text reports with enhanced data."""
     
     def __init__(self):
         self.conversation_summarizer = ConversationSummarizer()
-        # self.nlp = None  <-- REMOVED
         
-        # Define a single master list for all form fields in the user's specified order
         self.form_fields = [
             ('list_name', 'List Name'),
             ('property_type', 'Property Type'),
@@ -966,27 +946,21 @@ class ReportGenerator:
             ('call_recording', 'Call recording'),
         ]
 
-
         self.ai_analysis_fields = [
             ('personality', 'Seller Personality'),
+            ('highlights', 'Important Call Highlights'),
         ]
 
-        # Call recording will be in its own section at the end
         self.call_data_fields = [
             ('call_recording', 'Call recording')
         ]
 
-
-    # set_nlp_model method <-- REMOVED
-
     def _format_field_line(self, data: Dict[str, FieldData], field_key: str, display_name: str) -> str:
-        """Helper to format a single ◇ line."""
         if field_key in data:
             field_data = data[field_key]
             value = field_data.value
 
             if value and value != "Not mentioned" and value != "":
-                # Truncate long fields
                 if len(str(value)) > 400:
                     value = str(value)[:397] + "..."
                 return f"◇{display_name}: {value}"
@@ -996,7 +970,6 @@ class ReportGenerator:
             return f"◇{display_name}: Not mentioned"
 
     def _format_section(self, title: str, fields_list: List[tuple], data: Dict[str, FieldData]) -> List[str]:
-        """Formats a logical section with a title and fields."""
         lines = [
             "-" * 50,
             f"{title.upper()}",
@@ -1006,11 +979,10 @@ class ReportGenerator:
         for field_key, display_name in fields_list:
             lines.append(self._format_field_line(data, field_key, display_name))
         
-        lines.append("") # Add spacing after the section
+        lines.append("")
         return lines
 
     def _format_qualification_section(self, results: Dict[str, Any]) -> List[str]:
-        """Formats the AI lead qualification score into a readable section."""
         lines = [
             "=" * 50,
             f"LEAD QUALIFICATION: {results['verdict']} ({results['total_score']} / 100)",
@@ -1018,7 +990,6 @@ class ReportGenerator:
             ""
         ]
         
-        # Helper to format each line
         def format_score(name, data_key):
             data = results['breakdown'].get(data_key, {'score': 0, 'notes': 'N/A'})
             return f"• {name}: {data['score']} pts"
@@ -1028,7 +999,6 @@ class ReportGenerator:
         lines.append(format_score("Closing Time (20%)", "closing"))
         lines.append(format_score("Property Condition (10%)", "condition"))
         
-        # Add a more detailed notes section
         lines.append("\nQUALIFICATION NOTES:")
         lines.append(f"- REASON: {results['breakdown'].get('reason', {}).get('notes', 'N/A')}")
         lines.append(f"- PRICE: {results['breakdown'].get('price', {}).get('notes', 'N/A')}")
@@ -1040,10 +1010,9 @@ class ReportGenerator:
     def generate_report(self, merged_data: Dict[str, FieldData], 
                         transcript: Optional[str],
                         audio_result: Dict[str, Any],
-                        nlp_data: Dict[str, str], # This now contains 'personality'
+                        nlp_data: Dict[str, str],
                         qualification_results: Dict[str, Any],
                         source_filename: str) -> str:
-        """Generate enhanced text report with Form Data First in a single block"""
         
         lines = [
             "ENHANCED REAL ESTATE PROPERTY REPORT",
@@ -1052,11 +1021,8 @@ class ReportGenerator:
             ""
         ]
 
-        # --- 1. THE FORM (Main Data Block) ---
         lines.extend(self._format_section("PROPERTY & SELLER DETAILS", self.form_fields, merged_data))
         
-        # --- 2. AI CONVERSATION ANALYSIS (Personality Section) ---
-        # Create a temporary data dict for AI analysis fields
         ai_data = {}
         if 'personality' in nlp_data:
             ai_data['personality'] = FieldData(
@@ -1065,14 +1031,11 @@ class ReportGenerator:
                 confidence=0.9
             )
         
-        # Only add AI Analysis section if we have personality data
         if ai_data:
             lines.extend(self._format_section("AI CONVERSATION ANALYSIS", self.ai_analysis_fields, ai_data))
         
-        # --- 3. QUALIFICATION (Now after form and AI data) ---
         lines.extend(self._format_qualification_section(qualification_results))
 
-        # --- 4. FULL TRANSCRIPT ---
         if transcript:
             lines.extend(self._format_full_transcript(merged_data, transcript))
         else:
@@ -1085,17 +1048,11 @@ class ReportGenerator:
                 ""
             ])
         
-        # --- 5. CALL & SOURCE DATA ---
         lines.extend(self._format_section("CALL & SOURCE DATA", self.call_data_fields, merged_data))
         
         return "\n".join(lines)
     
-    
     def _format_full_transcript(self, data: Dict[str, FieldData], transcript: str) -> List[str]:
-        """
-        Formats the transcript with heuristic speaker labels (Agent/Seller).
-        This version splits by newline, not spacy sentences.
-        """
         lines = [
             "-" * 50,
             "FULL CALL TRANSCRIPT",
@@ -1104,48 +1061,37 @@ class ReportGenerator:
             ""
         ]
 
-        # Get speaker names from the data, with defaults
         agent_name_full = data.get('agent_name', FieldData("Agent", "", 0.0)).value
         seller_name_full = data.get('seller_name', FieldData("Seller", "", 0.0)).value
 
-        # Use first names as labels
         agent_label = agent_name_full.split()[0].strip(":") if agent_name_full else "Agent"
         seller_label = seller_name_full.split()[0].strip(":") if seller_name_full else "Seller"
 
-        # Set max label length for clean formatting
         max_label_len = max(len(agent_label), len(seller_label)) + 1
 
-        # --- MODIFIED: Loop over split lines instead of doc.sents ---
         for text in transcript.splitlines():
             text = text.strip()
             if not text:
                 continue
 
             text_lower = text.lower()
-            label = "" # Start with no label
+            label = ""
 
-            # --- Heuristic Rules ---
-            # 1. Agent identifies themself
             if (("this is " + agent_label.lower()) in text_lower or \
                 ("my name is " + agent_label.lower()) in text_lower):
                 label = agent_label
 
-            # 2. Seller says "speaking"
             elif "speaking" in text_lower and len(text_lower) < 20:
                 label = seller_label
 
-            # 3. Seller identifies themself
             elif (("this is " + seller_label.lower()) in text_lower or \
                 ("my name is " + seller_label.lower()) in text_lower):
                 label = seller_label
 
-            # --- Format the line ---
             if label:
-                # Add colon and pad for alignment
                 formatted_label = (label + ":").ljust(max_label_len)
                 lines.append(f"{formatted_label} {text}")
             else:
-                # No confident label, just indent the text
                 formatted_label = " ".ljust(max_label_len + 1)
                 lines.append(f"{formatted_label} {text}")
 
@@ -1153,15 +1099,11 @@ class ReportGenerator:
     
     def save_report(self, report_content: str, source_filename: str, 
                     output_dir: str = "output") -> str:
-        """Save report to file"""
-        # We don't need to save to disk in Streamlit, we'll return the content
-        # But we'll create a temp file path for the name
         base_name = os.path.splitext(os.path.basename(source_filename))[0]
         output_path = f"{base_name}_enhanced_report.txt"
-        
-        return output_path # Just return the name
+        return output_path
 
-# --- RealEstateAutomationSystem Class (Spacy Removed) ---
+# --- RealEstateAutomationSystem Class ---
 class RealEstateAutomationSystem:
     def __init__(self):
         self.form_parser = FormParser()
@@ -1171,25 +1113,15 @@ class RealEstateAutomationSystem:
         self.data_validator = DataValidator()
         self.ai_qualifier = None
 
-        # Initialize placeholders for analyzers
         self.nlp_analyzer = None
         self.rephraser = None
 
         self._initialize_analyzers()
 
-
     def _initialize_analyzers(self):
-        """
-        Initialize analyzers fresh for each lead.
-        - Load spaCy once and share it.
-        - Load Transformers QA model.
-        """
         st.info("Loading AI models (this is cached and only runs once)...")
         
-        # NLPAnalyzer loads (but doesn't hold a model)
-        self.nlp_analyzer = NLPAnalyzer() # <-- MODIFIED
-        
-        # Initialize the new API-based rephraser (cached)
+        self.nlp_analyzer = NLPAnalyzer()
         self.rephraser = AIRephraser()
 
         if self.rephraser.client:
@@ -1197,78 +1129,84 @@ class RealEstateAutomationSystem:
         else:
             st.error("❌ AI Qualifier NOT initialized (API client missing).")
 
-        # No spacy model to set
-        # self.report_generator.set_nlp_model(spacy_model) <-- REMOVED
-
-    
-    def process_lead(self, input_file_path: str, input_filename: str) -> list[tuple[str, str]]:
+    def process_lead(self, input_file_path: str, input_filename: str) -> tuple[str, str]:
         """Process a single lead file and return report content and filename"""
         
-        # Step 1: Parse form data
+        status_tracker = ProcessStatus()
+        status_tracker.update_stage('file_upload', 'complete')
+        
+        st.subheader("🔄 Processing Status")
+        status_tracker.display_status()
+        
         st.info("📝 Parsing form data...")
         form_data = self.form_parser.parse_file(input_file_path)
         
         call_recording_url = form_data.get('call_recording').value if form_data.get('call_recording') else None
         
-        # Step 2: Process audio if available
+        status_tracker.update_stage('data_parsing', 'complete')
+        status_tracker.display_status()
+
         audio_result = {'success': False}
         transcript = None
-        nlp_analysis = {} # Store results from the NLPAnalyzer
+        nlp_analysis = {}
         
         if call_recording_url and call_recording_url.strip():
             st.info("🎵 Processing call recording...")
-            audio_result = self.audio_processor.transcribe_audio(call_recording_url)
+            audio_result = self.audio_processor.transcribe_audio(call_recording_url, status_tracker)
+
+            if not audio_result['success']:
+                st.error("🚫 PROCESS STOPPED: Transcription failed. Please check the audio URL and try again.")
+                status_tracker.display_status()
+                return "Process stopped due to transcription failure", "error.txt"
             
             if audio_result['success']:
                 transcript = audio_result['transcript']
                 
-                # Step 3: Fast NLP Analysis (Motivation only)
                 with st.spinner("🤖 Analyzing conversation with fast NLP..."):
                     nlp_analysis = self.nlp_analyzer.analyze_transcript(transcript)
 
-                # --- AI ANALYSIS FOR ALL MAJOR FIELDS ---
                 st.info("🧠 STARTING DEEPSEEK AI ANALYSIS...")
                 
-                # PROPERTY TYPE CLEANING (NEW)
                 with st.spinner("🧠 Cleaning 'Property Type' with AI..."):
                     current_property_type = form_data.get('property_type').value if form_data.get('property_type') else ""
                     if current_property_type and current_property_type != "Property Type Not Specified":
                         ai_property_type = self.rephraser.rephrase("Property Type", current_property_type)
-                        # Update form data with AI-cleaned property type
-                        form_data['property_type'] = FieldData(
-                            value=ai_property_type,
-                            source='conversation', 
-                            confidence=0.95
-                        )
+                        if ai_property_type and "Transcript too short" not in ai_property_type:
+                            form_data['property_type'] = FieldData(
+                                value=ai_property_type,
+                                source='conversation', 
+                                confidence=0.95
+                            )
                     
-                # REASON FOR SELLING
                 with st.spinner("🧠 Analyzing 'Reason for Selling' with AI..."):
                     ai_reason = self.rephraser.rephrase("Reason for Selling", transcript)
                     nlp_analysis['reason'] = ai_reason
                 
-                # PROPERTY CONDITION  
                 with st.spinner("🧠 Analyzing 'Property Condition' with AI..."):
                     ai_condition = self.rephraser.rephrase("Property Condition", transcript)
                     nlp_analysis['condition'] = ai_condition
                 
-                # MORTGAGE STATUS
                 with st.spinner("🧠 Analyzing 'Mortgage Status' with AI..."):
                     ai_mortgage = self.rephraser.rephrase("Mortgage Status", transcript)
                     nlp_analysis['mortgage'] = ai_mortgage
                 
-                # OCCUPANCY STATUS
                 with st.spinner("🧠 Analyzing 'Occupancy Status' with AI..."):
                     ai_occupancy = self.rephraser.rephrase("Occupancy Status", transcript)
                     nlp_analysis['tenant'] = ai_occupancy
 
-                # SELLER PERSONALITY
+                with st.spinner("🧠 Identifying important call highlights..."):
+                    ai_highlights = self.rephraser.rephrase("Important Highlights", transcript)
+                    nlp_analysis['highlights'] = ai_highlights
+
                 with st.spinner("🧠 Analyzing 'Seller Personality' with AI..."):
                     ai_personality = self.rephraser.rephrase("Seller Personality", transcript)
                     nlp_analysis['personality'] = ai_personality
                 
                 st.success("✅ DEEPSEEK AI ANALYSIS COMPLETE")
+
+                status_tracker.update_stage('ai_analysis', 'complete')
+                status_tracker.display_status()
                 
-                # Step 4: Validate and override form data with AI insights
                 with st.spinner("🔄 Applying AI conversation insights to form data..."):
                     form_data = self._apply_conversation_insights(form_data, nlp_analysis)
                 
@@ -1276,7 +1214,6 @@ class RealEstateAutomationSystem:
                 st.error(f"❌ Audio processing failed: {audio_result.get('error')}")
         else:
             st.warning("⚠️ No call recording URL found in form data. Skipping audio analysis.")
-            # Initialize empty nlp_analysis to avoid errors
             nlp_analysis = {
                 'reason': "No transcript available",
                 'condition': "No transcript available", 
@@ -1286,14 +1223,14 @@ class RealEstateAutomationSystem:
                 'personality': "No transcript available"
             }
 
-        # Step 5: Merge/Derive remaining fields
         with st.spinner("🔗 Deriving dependent fields (Moving Time)..."):
             form_data = self.data_merger.merge(form_data, transcript, audio_result)
 
         st.info("⚖️ Starting final AI-powered lead qualification...")
         qualification_results = self.ai_qualifier.qualify(form_data)
+        status_tracker.update_stage('qualification', 'complete')
+        status_tracker.display_status()
         
-        # Step 6: Generate enhanced report
         st.info("📊 Generating final report...")
         report_content = self.report_generator.generate_report(
             form_data, 
@@ -1303,20 +1240,95 @@ class RealEstateAutomationSystem:
             qualification_results,
             input_filename
         )
+        status_tracker.update_stage('report_generation', 'complete')
+        status_tracker.display_status()
         
-        # Save report
         output_filename = self.report_generator.save_report(report_content, input_filename)
         
+        st.subheader("🎉 PROCESSING RESULTS")
+        
+        tab1, tab2, tab3, tab4, tab5 = st.tabs([
+            "📋 FORM DATA", 
+            "🎵 TRANSCRIPT", 
+            "🤖 AI ANALYSIS", 
+            "⚖️ QUALIFICATION", 
+            "📄 FINAL REPORT"
+        ])
+        
+        with tab1:
+            st.header("📋 Parsed Form Data")
+            form_display = []
+            for field_key, field_data in form_data.items():
+                if field_data.value and field_data.value not in ["", "Not mentioned"]:
+                    display_name = next((names[0] for key, names in self.form_parser.field_patterns.items() if key == field_key), field_key)
+                    form_display.append(f"◇{display_name}: {field_data.value}")
+            
+            st.text_area("Form Data", "\n".join(form_display), height=500, key="form_data_tab")
+        
+        with tab2:
+            st.header("🎵 Call Transcript")
+            if transcript and transcript != "No transcription available":
+                st.text_area("Transcript", transcript, height=500, key="transcript_tab")
+            else:
+                st.info("No transcript available for this lead")
+        
+        with tab3:
+            st.header("🤖 AI Conversation Analysis")
+            
+            ai_analysis_content = []
+            
+            if 'reason' in nlp_analysis:
+                ai_analysis_content.append(f"◇Reason for Selling: {nlp_analysis['reason']}")
+            if 'condition' in nlp_analysis:
+                ai_analysis_content.append(f"◇Property Condition: {nlp_analysis['condition']}")
+            if 'mortgage' in nlp_analysis:
+                ai_analysis_content.append(f"◇Mortgage Status: {nlp_analysis['mortgage']}")
+            if 'tenant' in nlp_analysis:
+                ai_analysis_content.append(f"◇Occupancy Status: {nlp_analysis['tenant']}")
+            if 'personality' in nlp_analysis:
+                ai_analysis_content.append(f"◇Seller Personality: {nlp_analysis['personality']}")
+            if 'motivation' in nlp_analysis:
+                ai_analysis_content.append(f"◇Motivation Analysis: {nlp_analysis['motivation']}")
+            if 'highlights' in nlp_analysis:  
+                ai_analysis_content.append(f"◇Important Call Highlights:\n{nlp_analysis['highlights']}")  
+            
+            if ai_analysis_content:
+                st.text_area("AI Analysis Results", "\n".join(ai_analysis_content), height=500, key="ai_analysis_tab")
+            else:
+                st.info("No AI analysis available (no transcript)")
+        
+        with tab4:
+            st.header("⚖️ Lead Qualification")
+            
+            qual_content = [
+                f"◇Total Score: {qualification_results['total_score']}/100",
+                f"◇Verdict: {qualification_results['verdict']}",
+                "",
+                "BREAKDOWN:"
+            ]
+            
+            for category, data in qualification_results['breakdown'].items():
+                qual_content.append(f"◇{category.title()}: {data['score']} pts - {data['notes']}")
+            
+            st.text_area("Qualification Results", "\n".join(qual_content), height=500, key="qualification_tab")
+        
+        with tab5:
+            st.header("📄 Final Comprehensive Report")
+            st.text_area("Complete Report", report_content, height=500, key="final_report_tab")
+        
         st.success(f"✅ Enhanced report generated!")
+        
+        st.download_button(
+            label="⬇️ Download Complete Report",
+            data=report_content,
+            file_name=output_filename,
+            mime="text/plain"
+        )
+        
         return report_content, output_filename
     
     def _apply_conversation_insights(self, form_data: Dict[str, FieldData], 
                                      nlp_analysis: Dict[str, str]) -> Dict[str, FieldData]:
-        """
-        Apply validated conversation insights - AI ALWAYS WINS for major fields
-        """
-        
-        # REASON FOR SELLING: AI always wins
         conversation_reason = nlp_analysis.get('reason', '')
         if conversation_reason and "no reason" not in conversation_reason.lower():
             cleaned_reason = self.data_validator.clean_reason_field(conversation_reason)
@@ -1326,7 +1338,6 @@ class RealEstateAutomationSystem:
                 confidence=1.0
             )
         
-        # PROPERTY CONDITION: AI always wins  
         conversation_condition = nlp_analysis.get('condition', '')
         if conversation_condition and "no specific" not in conversation_condition.lower():
             form_data['condition'] = FieldData(
@@ -1335,7 +1346,6 @@ class RealEstateAutomationSystem:
                 confidence=1.0
             )
         
-        # MORTGAGE: AI always wins
         conversation_mortgage = nlp_analysis.get('mortgage', '')
         if conversation_mortgage and "no mortgage information" not in conversation_mortgage.lower():
             form_data['mortgage'] = FieldData(
@@ -1344,7 +1354,6 @@ class RealEstateAutomationSystem:
                 confidence=0.95
             )
         
-        # OCCUPANCY: AI always wins
         conversation_occupancy = nlp_analysis.get('tenant', '')
         if conversation_occupancy and "no occupancy information" not in conversation_occupancy.lower():
             form_data['occupancy'] = FieldData(
@@ -1353,7 +1362,6 @@ class RealEstateAutomationSystem:
                 confidence=0.95
             )
         
-        # MOTIVATION: NLP analysis wins
         conversation_motivation = nlp_analysis.get('motivation', '')
         if conversation_motivation and "no motivation" not in conversation_motivation.lower():
             form_data['motivation_details'] = FieldData(
@@ -1362,24 +1370,35 @@ class RealEstateAutomationSystem:
                 confidence=0.9
             )
         
+        conversation_highlights = nlp_analysis.get('highlights', '')
+        if conversation_highlights and "no critical highlights" not in conversation_highlights.lower():
+            nlp_analysis['highlights'] = conversation_highlights
+        
         return form_data
 
-
 # --- STREAMLIT UI ---
+st.set_page_config(page_title="Real Estate Lead Automation", layout="wide")
+st.title("🏠 Real Estate Lead Automation System")
+st.markdown("Automated lead processing with AI-powered analysis")
 
-st.set_page_config(layout="wide")
-st.title("🤖 Real Estate Lead Automation System")
-st.markdown("Paste your lead data below or upload a file")
+# API Key Loading
+deepseek_api_key = None
+try:
+    deepseek_api_key = getattr(st, "secrets", {}).get("DEEPSEEK_API_KEY")
+except Exception:
+    deepseek_api_key = None 
+if not deepseek_api_key:
+    deepseek_api_key = os.getenv("DEEPSEEK_API_KEY")
 
-# Check if API key is available in secrets
-if 'DEEPSEEK_API_KEY' in st.secrets:
-    st.success("✅ DeepSeek API key found in secrets")
-    os.environ["DEEPSEEK_API_KEY"] = st.secrets["DEEPSEEK_API_KEY"]
+if deepseek_api_key:
+    st.success("✅ DeepSeek API key loaded")
+    os.environ["DEEPSEEK_API_KEY"] = deepseek_api_key 
 else:
-    st.error("❌ DeepSeek API key not found in secrets.")
-    st.stop()
+    st.error("❌ DEEPSEEK_API_KEY not found in Streamlit secrets or environment variables.")
+    st.warning("Please add your DEEPSEEK_API_KEY to your secrets to run the app.")
+    st.stop() 
 
-# --- Input Method Selection ---
+# Input Method Selection
 input_method = st.radio(
     "Choose input method:",
     ["📝 Paste Lead Data", "📁 Upload File"],
@@ -1402,7 +1421,7 @@ if input_method == "📝 Paste Lead Data":
         lead_data = lead_text
         source_name = "pasted_data"
 
-else:  # File upload method
+else:
     st.subheader("📁 Upload Lead File")
     uploaded_file = st.file_uploader("Select a `.txt` lead file", type=["txt"], label_visibility="collapsed")
     
@@ -1410,46 +1429,27 @@ else:  # File upload method
         lead_data = uploaded_file.getvalue().decode('utf-8')
         source_name = uploaded_file.name
 
-# --- Process Button ---
+# Process Button
 if lead_data:
     st.markdown("---")
     
-    # Show preview
     with st.expander("📋 Data Preview", expanded=True):
         st.text(lead_data[:1000] + "..." if len(lead_data) > 1000 else lead_data)
     
     if st.button("🚀 Process Lead", type="primary"):
-        # Create a temporary file for processing
         with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.txt', encoding='utf-8') as tmp_file:
             tmp_file.write(lead_data)
             temp_file_path = tmp_file.name
 
         try:
-            # Initialize and run the system
             system = RealEstateAutomationSystem()
-            
-            # Process the lead using your existing method
-            with st.container():
-                report_content, report_filename = system.process_lead(temp_file_path, source_name)
-            
-            # Display the final report
-            st.subheader("🎉 Final Enhanced Report")
-            st.text_area("Report Content", report_content, height=600)
-            
-            # Download button
-            st.download_button(
-                label="⬇️ Download Report",
-                data=report_content,
-                file_name=report_filename,
-                mime="text/plain"
-            )
+            report_content, report_filename = system.process_lead(temp_file_path, source_name)
+            st.success("✅ Lead processing completed! Check the tabs above for detailed results.")
 
         except Exception as e:
             st.error(f"An unexpected error occurred: {e}")
             st.exception(e)
             
         finally:
-            # Clean up temporary file
-            if os.path.exists(temp_file_path):
+            if 'temp_file_path' in locals() and os.path.exists(temp_file_path):
                 os.unlink(temp_file_path)
-
